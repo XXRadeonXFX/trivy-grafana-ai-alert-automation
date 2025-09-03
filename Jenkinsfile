@@ -8,7 +8,7 @@ pipeline {
         EC2_USER = "ubuntu"
         EC2_HOST = "15.206.75.104"
         AWS_REGION = "ap-south-1"
-        ECR_REPO_PATH = "975050024946.dkr.ecr.ap-south-1.amazonaws.com
+        ECR_REPO_PATH = "975050024946.dkr.ecr.ap-south-1.amazonaws.com"
         ECR_REPO_NAME = "prince-reg"
         IMAGE_TAG = "dev-${BUILD_NUMBER}"
         AWS_ACCESS_KEY_ID = credentials('prince-access-key-id')

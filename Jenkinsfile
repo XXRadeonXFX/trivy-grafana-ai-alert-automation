@@ -8,7 +8,7 @@ pipeline {
 
   environment {
     GIT_REPO   = 'https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation'
-    GIT_BRANCH = 'main'
+    GIT_BRANCH = 'master'
 
     // ---- Test inputs ----
     BUILD_REF_ID      = '3'

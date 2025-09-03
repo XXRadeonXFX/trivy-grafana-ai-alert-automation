@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        GIT_REPO = "https://github.com/thirumalai-py/trivy-grafana-ai-alert"
+        GIT_REPO = "https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation"
         GIT_BRANCH = "main"
         EC2_SSH = "thiru-ec2"
         EC2_USER = "ubuntu"
@@ -14,7 +14,7 @@ pipeline {
         AWS_ACCESS_KEY_ID = credentials('thiru-access-key-id')
         AWS_SECRET_ACCESS_KEY = credentials('thiru-secret-access-key')
         DOCKER_NETWORK = "app-network"
-        ALERT_EMAIL = "thirumalai.py@gmail.com"
+        ALERT_EMAIL = "prince.thakur24051996@gmail.com"
         CONTAINER_NAME= "user-api"
         DATABASE_URL = credentials('mern-database')
         CVE_DB_HOST = credentials('CVE_DB_HOST')
@@ -23,7 +23,9 @@ pipeline {
         CVE_DB_NAME = credentials('CVE_DB_NAME')
         ECR_RETAIN_COUNT = 6
         CONTAINER_PORT= 8000
-        ALERT_MANAGER_URL= "http://3.216.252.178:8000"
+        
+        // Updated AlertManager URL to your Azure VM
+        ALERT_MANAGER_URL= "http://4.240.98.78:8000"
         ALERT_MANAGER_SECRET= "yourapisecret"
     }
 

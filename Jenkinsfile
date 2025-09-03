@@ -42,7 +42,7 @@ pipeline {
                 git(
                     url: "${GIT_REPO}",
                     branch: "${GIT_BRANCH}",
-                    credentialsId: "thiru-github-access"
+                    credentialsId: "prince-github-access"
                 )
             }
         }

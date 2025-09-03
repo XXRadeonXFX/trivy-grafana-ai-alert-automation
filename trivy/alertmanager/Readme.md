@@ -52,19 +52,19 @@ PG_DB=cve_scanner
 PG_USER=postgres
 PG_HOST=trivy-postgres-server.postgres.database.azure.com
 PG_PORT=5432
-PG_PASS=1029384756!Sound
+PG_PASS=XXXXXXXXXXXX
 
 POSTGRES_HOST=trivy-postgres-server.postgres.database.azure.com
 POSTGRES_DB=cve_scanner
 POSTGRES_USER=postgres
-POSTGRES_PASSWORD=1029384756!Sound
+POSTGRES_PASSWORD=XXXXXXXXXXXX
 
 # SMTP Email Settings
 SMTP_FROM_EMAIL=prince.beats01@gmail.com
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=prince.beats01@gmail.com
-SMTP_PASS=kfbi txbk oomq nflp
+SMTP_PASS=XXXXXXXXXXX
 ALERT_TO_EMAILS=prince.thakur24051996@gmail.com
 
 # Grafana Dashboard links
@@ -72,9 +72,9 @@ GRAFANA_URL=http://4.240.98.78:3000
 BUILD_DASHBOARD_UID=build-dashboard
 
 # AI Keys
-GEMINI_API_KEY=AIzaSyDHpeP3q25ii-x4GPDlJYl57HZd22pcTmM
+GEMINI_API_KEY=
 OPENAI_API_KEY=
-AI_API_KEY=AIzaSyDHpeP3q25ii-x4GPDlJYl57HZd22pcTmM
+#AI_API_KEY=
 
 # API Secret
 WEBHOOK_API_SECRET=yourapisecret

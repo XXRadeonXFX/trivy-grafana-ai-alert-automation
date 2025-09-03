@@ -202,6 +202,24 @@ Docker Compose automatically injects these values into the containers.
 - Install and configure Nginx on the Grafana/Alertmanager server.
 - Set up reverse proxies for Grafana and Alertmanager with your domain:
 
+> Use the public IP of the box that runs Grafana/Alertmanager/Nginx (sounds like your Azure VM `4.240.98.78`; if you’re using a different host, swap the IP below).
+
+# 1) Cloudflare DNS
+
+Cloudflare → **thakurprince.com → DNS**
+
+* Add `A` record: **grafana** → **4.240.98.78**
+* Add `A` record: **alerts** → **4.240.98.78**
+* For first setup, set **Proxy status = DNS only (grey cloud)**. You can switch to orange “Proxied” after TLS works.
+* Ensure your server’s firewall/Security Group allows **80** and **443**.
+
+# 2) Install Nginx + Certbot on the server
+
+```bash
+sudo apt update
+sudo apt install -y nginx certbot python3-certbot-nginx
+```
+
 ```
 server {
     listen 80;
@@ -259,6 +277,15 @@ Body:
   "ai_engine": "openai",
   "model": "gpt-4.1-nano"
 }
+```
+```
+FOR GEMINI VM test
+
+curl -X POST "http://4.240.98.78:8000/generate-ai-suggestion"   -H "Content-Type: application/json"   -H "api-secret: yourapisecret"   -d '{
+    "build_id": 1,
+    "ai_engine": "gemini",
+    "model": "gemini-2.0-flash"
+  }'
 ```
 
 **6. Integration with Grafana**
@@ -581,6 +608,5 @@ This project integrates with Grafana to provide rich visual dashboards for vulne
   - Now we have 2 dashboards `Trivy Project Security Dashboard` and `Build Dashboard`
   - The build dashboard is linked from the `Trivy Project Security Dashboard` 
   > ![Verify Build Dashboard Linking](output/grafana-both-dashboard.png)
-
 
 

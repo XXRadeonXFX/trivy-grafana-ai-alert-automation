@@ -1,22 +1,22 @@
-// Jenkinsfile (AI stage test only)
 pipeline {
   agent any
+
   options {
     timeout(time: 15, unit: 'MINUTES')
-    skipDefaultCheckout(true)
+    buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
   parameters {
-    string(name: 'BUILD_REF_ID', defaultValue: '3', description: 'build_id to send')
-    choice(name: 'AI_ENGINE', choices: ['openai', 'gemini'], description: 'AI provider')
-    string(name: 'AI_MODEL', defaultValue: '', description: 'Optional model override')
-    string(name: 'ALERT_MANAGER_URL', defaultValue: 'https://alerts.thakurprince.com', description: 'Service base URL')
-    password(name: 'ALERT_MANAGER_SECRET', defaultValue: '', description: 'Value for api-secret header')
-    string(name: 'GIT_BRANCH', defaultValue: 'main', description: 'Branch to checkout')
+    string(name: 'BUILD_REF_ID', defaultValue: '26', description: 'build_id sent to /generate-ai-suggestion')
+    choice(name: 'AI_ENGINE', choices: ['openai', 'gemini'], description: 'AI provider to use')
+    string(name: 'AI_MODEL', defaultValue: '', description: 'Optional: override model (leave empty for default per engine)')
+    string(name: 'ALERT_MANAGER_URL', defaultValue: 'https://alerts.thakurprince.com', description: 'Base URL of the AI Suggestion service')
   }
 
   environment {
-    GIT_REPO = 'https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation'
+    // your repo that contains trivy/ai_suggestion.py
+    GIT_REPO   = 'https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation'
+    GIT_BRANCH = 'main'
   }
 
   stages {
@@ -24,38 +24,42 @@ pipeline {
       steps {
         checkout([
           $class: 'GitSCM',
-          branches: [[name: "*/${params.GIT_BRANCH}"]],
-          userRemoteConfigs: [[
-            url: "${GIT_REPO}",
-            credentialsId: "prince-github-access"
-          ]]
+          branches: [[name: "*/${GIT_BRANCH}"]],
+          userRemoteConfigs: [[url: "${GIT_REPO}", credentialsId: 'prince-github-access']]
         ])
+        sh 'test -f trivy/ai_suggestion.py && echo "ai_suggestion.py present" || (echo "Missing trivy/ai_suggestion.py" && exit 1)'
       }
     }
 
     stage('AI Security Analysis (TEST)') {
       steps {
-        script {
-          // Build optional --model arg in Groovy to avoid shell quoting mess
-          def modelOpt = params.AI_MODEL?.trim() ? "--model ${params.AI_MODEL.trim()}" : ""
+        withCredentials([string(credentialsId: 'alert-manager-secret', variable: 'ALERT_SECRET')]) {
+          sh """#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p reports
 
-          sh """
-            set -euo pipefail
-            mkdir -p reports
+# ensure Python + requests
+python3 --version
+python3 -m pip install --user -q --upgrade pip requests || true
+export PATH="\$HOME/.local/bin:\$PATH"
 
-            echo "=== AI-Powered Security Recommendations (TEST) ==="
-            python3 trivy/ai_suggestion.py \\
-              '${params.BUILD_REF_ID}' \\
-              '${params.ALERT_MANAGER_URL}' \\
-              '${params.ALERT_MANAGER_SECRET}' \\
-              --engine ${params.AI_ENGINE} ${modelOpt} \\
-              --timeout 60 --retries 3 --log-level INFO --json-only \\
-              | tee "reports/ai-suggestion-${BUILD_NUMBER}.json"
-          """
+# optional model flag
+MODEL_OPT=""
+if [ -n "${params.AI_MODEL}" ]; then
+  MODEL_OPT="--model ${params.AI_MODEL}"
+fi
 
-          // keep JSON handy for emails / later stages
-          env.AI_SUGGESTION = readFile("reports/ai-suggestion-${env.BUILD_NUMBER}.json")
-          echo "AI Suggestion JSON saved to reports/ai-suggestion-${env.BUILD_NUMBER}.json"
+echo "=== AI-Powered Security Recommendations (TEST) ==="
+python3 trivy/ai_suggestion.py \\
+  '${params.BUILD_REF_ID}' \\
+  '${params.ALERT_MANAGER_URL}' \\
+  "\$ALERT_SECRET" \\
+  --engine ${params.AI_ENGINE} \${MODEL_OPT} \\
+  --timeout 60 --retries 3 --log-level INFO --json-only \\
+| tee "reports/ai-suggestion-${BUILD_NUMBER}.json"
+
+echo "Saved: reports/ai-suggestion-${BUILD_NUMBER}.json"
+"""
         }
       }
     }
@@ -63,8 +67,7 @@ pipeline {
 
   post {
     always {
-      archiveArtifacts artifacts: 'reports/ai-suggestion-*.json',
-                       allowEmptyArchive: true, fingerprint: true
+      archiveArtifacts artifacts: 'reports/ai-suggestion-*.json', fingerprint: true, allowEmptyArchive: true
     }
   }
 }

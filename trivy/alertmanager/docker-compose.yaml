@@ -1,0 +1,63 @@
+services:
+  
+  grafana:
+    image: grafana/grafana
+    container_name: grafana_dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_volume:/var/lib/grafana
+    environment:
+      - grafana_network
+      - GF_SERVER_ROOT_URL=http://example.com/
+      - GF_SMTP_ENABLED=true
+      - GF_SMTP_HOST=smtp.google.com:587
+      - GF_SMTP_USER=username
+      - GF_SMTP_PASSWORD=password
+      - GF_SMTP_FROM_ADDRESS=no-reply@example.com
+      - GF_SMTP_FROM_NAME=Grafana Alerts
+      - GF_SMTP_SKIP_VERIFY=true
+
+  alert-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alert-service
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager:/app   # mount local code into container
+    environment:
+      # PostgreSQL settings
+      PG_DB: cve_db
+      PG_USER: postgress
+      PG_PASS: password
+      PG_HOST: host_ip
+      PG_PORT: 5432
+
+      # SMTP settings
+      SMTP_FROM_EMAIL: no-reply@example.com
+      SMTP_HOST: smtp.google.com
+      SMTP_PORT: 587
+      SMTP_USER: username
+      SMTP_PASS: passwor
+      ALERT_TO_EMAILS: thirumalai.py@gmail.com
+
+      # Grafana Dashboard links
+      GRAFANA_URL: http://example.com #--> Add domain without /
+      BUILD_DASHBOARD_UID: build-dashboard/build-dashboard #--> Full url of the dashboaard after /d/
+
+      # AI Keys
+      GEMINI_API_KEY: yourgeminikey
+      OPENAI_API_KEY: youropenaikey
+
+      # API Secret
+      WEBHOOK_API_SECRET: yourapisecret
+
+    ports:
+      - "8000:8000"
+
+volumes:
+  grafana_volume:
+
+networks:
+  grafana_network:

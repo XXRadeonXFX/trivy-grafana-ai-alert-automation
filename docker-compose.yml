@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+
+  mongo-db:
+    image: mongo:latest
+    container_name: mongo-db
+    restart: always
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=flask_db
+    networks:
+      - app-network
+
+  web:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: web
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongo-db:27017/flask_db
+      - JWT_SECRET_KEY=thirumalaipy
+      - MONGO_DB_NAME=flask_db
+    depends_on:
+      - mongo-db
+    volumes:
+      - .:/app
+    networks:
+      - app-network
+
+  test:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: test
+    environment:
+      - RUN_TESTS=true
+      - MONGO_URI=mongodb://mongo-db:27017/test_db
+    depends_on:
+      - mongo-db
+    volumes:
+      - .:/app
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mongo_data: 

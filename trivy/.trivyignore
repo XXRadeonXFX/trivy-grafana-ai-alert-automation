@@ -1,0 +1,20 @@
+# Common low/noise vulnerabilities in base images
+# These often appear in Ubuntu/Debian/Alpine base images but are already mitigated upstream.
+
+# libssl/openssl info disclosures in old packages
+CVE-2016-20012
+
+# Glibc timezone parsing issue (low severity)
+CVE-2019-18276
+
+# Busybox tar handling (low severity)
+CVE-2021-42374
+
+# Git minor DoS issue (low severity)
+CVE-2022-24765
+
+# Alpine 'apk-tools' harmless warning
+CVE-2021-36159
+
+# Python pip low severity
+CVE-2019-20916

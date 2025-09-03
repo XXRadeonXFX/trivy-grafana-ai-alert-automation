@@ -6,17 +6,17 @@ pipeline {
     buildDiscarder(logRotator(numToKeepStr: '10'))
   }
 
-  parameters {
-    string(name: 'BUILD_REF_ID', defaultValue: '26', description: 'build_id sent to /generate-ai-suggestion')
-    choice(name: 'AI_ENGINE', choices: ['openai', 'gemini'], description: 'AI provider to use')
-    string(name: 'AI_MODEL', defaultValue: '', description: 'Optional: override model (leave empty for default per engine)')
-    string(name: 'ALERT_MANAGER_URL', defaultValue: 'https://alerts.thakurprince.com', description: 'Base URL of the AI Suggestion service')
-  }
-
   environment {
-    // your repo that contains trivy/ai_suggestion.py
+    // Repo that contains trivy/ai_suggestion.py
     GIT_REPO   = 'https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation'
     GIT_BRANCH = 'main'
+
+    // ---- TEST SETTINGS (edit as you like) ----
+    BUILD_REF_ID       = '26'
+    AI_ENGINE          = 'openai'      // or 'gemini'
+    AI_MODEL           = ''            // optional; leave empty to use engine default
+    ALERT_MANAGER_URL  = 'https://alerts.thakurprince.com'
+    ALERT_SECRET       = 'yourapisecret' // <-- hardcoded per your request
   }
 
   stages {
@@ -33,34 +33,32 @@ pipeline {
 
     stage('AI Security Analysis (TEST)') {
       steps {
-        withCredentials([string(credentialsId: 'alert-manager-secret', variable: 'ALERT_SECRET')]) {
-          sh """#!/usr/bin/env bash
-set -euo pipefail
+        sh """#!/usr/bin/env bash
+set -e
 mkdir -p reports
 
 # ensure Python + requests
-python3 --version
+python3 --version || true
 python3 -m pip install --user -q --upgrade pip requests || true
 export PATH="\$HOME/.local/bin:\$PATH"
 
 # optional model flag
 MODEL_OPT=""
-if [ -n "${params.AI_MODEL}" ]; then
-  MODEL_OPT="--model ${params.AI_MODEL}"
+if [ -n "${AI_MODEL}" ]; then
+  MODEL_OPT="--model ${AI_MODEL}"
 fi
 
 echo "=== AI-Powered Security Recommendations (TEST) ==="
 python3 trivy/ai_suggestion.py \\
-  '${params.BUILD_REF_ID}' \\
-  '${params.ALERT_MANAGER_URL}' \\
-  "\$ALERT_SECRET" \\
-  --engine ${params.AI_ENGINE} \${MODEL_OPT} \\
+  "${BUILD_REF_ID}" \\
+  "${ALERT_MANAGER_URL}" \\
+  "${ALERT_SECRET}" \\
+  --engine "${AI_ENGINE}" \${MODEL_OPT} \\
   --timeout 60 --retries 3 --log-level INFO --json-only \\
 | tee "reports/ai-suggestion-${BUILD_NUMBER}.json"
 
 echo "Saved: reports/ai-suggestion-${BUILD_NUMBER}.json"
 """
-        }
       }
     }
   }

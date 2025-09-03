@@ -13,7 +13,7 @@ pipeline {
     // ---- Test inputs ----
     BUILD_REF_ID      = '3'
     AI_ENGINE         = 'gemini'          // or 'gemini'
-    AI_MODEL          = ''                // optional; leave blank to use engine default
+    AI_MODEL          = 'gemini-2.0-flash'                // optional; leave blank to use engine default
     ALERT_MANAGER_URL = 'https://alerts.thakurprince.com'
     ALERT_SECRET      = 'yourapisecret'   // hardcoded per your request
   }

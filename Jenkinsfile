@@ -444,62 +444,121 @@ pipeline {
 
         stage('Deploy Application') {
             steps {
-                sshagent(credentials: [env.EC2_SSH]) {
-                    sh '''
-                        echo "=== Application Deployment ==="
-                        
-                        ssh -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
-                            set -e
+                script {
+                    // First, test SSH connectivity
+                    try {
+                        sshagent(credentials: ['prince-ec2']) {
+                            sh '''
+                                echo "=== Testing SSH Connection ==="
+                                ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} 'echo "SSH connection test successful"'
+                            '''
+                        }
+                        echo "SSH connection verified successfully"
+                    } catch (Exception e) {
+                        error("SSH connection failed. Please check your SSH credentials and EC2 server status. Error: ${e.getMessage()}")
+                    }
+                    
+                    // Proceed with deployment if SSH test passes
+                    sshagent(credentials: ['prince-ec2']) {
+                        sh '''
+                            echo "=== Application Deployment ==="
                             
-                            # Export AWS credentials
-                            export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
-                            export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
-                            export AWS_DEFAULT_REGION=${AWS_REGION}
-                            
-                            echo 'Deployment initiated on target server'
-                            
-                            # Authenticate with ECR
-                            aws ecr get-login-password --region ${AWS_REGION} | \\
-                                docker login --username AWS --password-stdin ${ECR_REPO_PATH}
-                            
-                            # Pull latest image
-                            echo 'Pulling application image'
-                            docker pull ${ECR_REPO_PATH}:${IMAGE_TAG}
-                            
-                            # Stop existing container
-                            echo 'Stopping existing application container'
-                            docker stop ${CONTAINER_NAME} 2>/dev/null || true
-                            docker rm ${CONTAINER_NAME} 2>/dev/null || true
-                            
-                            # Start new container
-                            echo 'Starting new application container'
-                            docker run -d \\
-                                --name ${CONTAINER_NAME} \\
-                                -p ${CONTAINER_PORT}:${CONTAINER_PORT} \\
-                                --restart unless-stopped \\
-                                -e PORT=${CONTAINER_PORT} \\
-                                -e MONGO_URI=\\\"${DATABASE_URL}\\\" \\
-                                -e JWT_SECRET_KEY=thirumalaipy \\
-                                -e MONGO_DB_NAME=flask_db \\
-                                -e NODE_ENV=production \\
-                                --label deployment.build=${BUILD_NUMBER} \\
-                                --label deployment.timestamp=\\$(date -u +%Y-%m-%dT%H:%M:%SZ) \\
-                                ${ECR_REPO_PATH}:${IMAGE_TAG}
-                            
-                            # Verify deployment
-                            echo 'Verifying deployment'
-                            sleep 10
-                            
-                            if docker ps | grep -q ${CONTAINER_NAME}; then
-                                echo 'Deployment verification successful'
-                            else
-                                echo 'Deployment verification failed - checking logs'
-                                docker logs ${CONTAINER_NAME} || true
-                            fi
-                            
-                            echo 'Application deployment completed'
-                        "
-                    '''
+                            ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
+                                set -e
+                                
+                                echo 'Deployment initiated on target server'
+                                echo 'Current user: '\\$(whoami)
+                                echo 'Current directory: '\\$(pwd)
+                                
+                                # Check if AWS CLI is installed
+                                if ! command -v aws >/dev/null 2>&1; then
+                                    echo 'Installing AWS CLI...'
+                                    curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip'
+                                    unzip -q awscliv2.zip
+                                    sudo ./aws/install
+                                    rm -rf aws awscliv2.zip
+                                fi
+                                
+                                # Export AWS credentials
+                                export AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+                                export AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+                                export AWS_DEFAULT_REGION=${AWS_REGION}
+                                
+                                echo 'AWS credentials configured'
+                                
+                                # Check if Docker is installed and running
+                                if ! command -v docker >/dev/null 2>&1; then
+                                    echo 'Installing Docker...'
+                                    curl -fsSL https://get.docker.com -o get-docker.sh
+                                    sudo sh get-docker.sh
+                                    sudo usermod -aG docker \\$USER
+                                    sudo systemctl enable docker
+                                    sudo systemctl start docker
+                                fi
+                                
+                                # Ensure docker service is running
+                                sudo systemctl start docker || true
+                                
+                                echo 'Docker service status:'
+                                sudo systemctl status docker --no-pager -l
+                                
+                                # Authenticate with ECR
+                                echo 'Authenticating with ECR...'
+                                aws ecr get-login-password --region ${AWS_REGION} | \\
+                                    sudo docker login --username AWS --password-stdin ${ECR_REPO_PATH}
+                                
+                                # Pull latest image
+                                echo 'Pulling application image: ${ECR_REPO_PATH}:${IMAGE_TAG}'
+                                sudo docker pull ${ECR_REPO_PATH}:${IMAGE_TAG}
+                                
+                                # Stop and remove existing container
+                                echo 'Stopping existing application container'
+                                sudo docker stop ${CONTAINER_NAME} 2>/dev/null || echo 'No existing container to stop'
+                                sudo docker rm ${CONTAINER_NAME} 2>/dev/null || echo 'No existing container to remove'
+                                
+                                # Start new container
+                                echo 'Starting new application container'
+                                sudo docker run -d \\
+                                    --name ${CONTAINER_NAME} \\
+                                    -p ${CONTAINER_PORT}:${CONTAINER_PORT} \\
+                                    --restart unless-stopped \\
+                                    -e PORT=${CONTAINER_PORT} \\
+                                    -e MONGO_URI='${DATABASE_URL}' \\
+                                    -e JWT_SECRET_KEY=thirumalaipy \\
+                                    -e MONGO_DB_NAME=flask_db \\
+                                    -e NODE_ENV=production \\
+                                    --label deployment.build=${BUILD_NUMBER} \\
+                                    --label deployment.timestamp=\\$(date -u +%Y-%m-%dT%H:%M:%SZ) \\
+                                    ${ECR_REPO_PATH}:${IMAGE_TAG}
+                                
+                                echo 'Container started. Waiting for application to initialize...'
+                                sleep 15
+                                
+                                # Verify deployment
+                                echo 'Verifying deployment...'
+                                if sudo docker ps | grep -q ${CONTAINER_NAME}; then
+                                    echo 'Container is running successfully'
+                                    sudo docker ps | grep ${CONTAINER_NAME}
+                                    
+                                    # Check application health
+                                    echo 'Testing application health...'
+                                    sleep 5
+                                    if curl -f -s http://localhost:${CONTAINER_PORT}/health >/dev/null 2>&1; then
+                                        echo 'Application health check passed'
+                                    else
+                                        echo 'Application health check failed, checking logs...'
+                                        sudo docker logs ${CONTAINER_NAME} --tail 50
+                                    fi
+                                else
+                                    echo 'Container failed to start. Checking logs...'
+                                    sudo docker logs ${CONTAINER_NAME} --tail 50 || echo 'No logs available'
+                                    exit 1
+                                fi
+                                
+                                echo 'Application deployment completed successfully'
+                            "
+                        '''
+                    }
                 }
             }
         }

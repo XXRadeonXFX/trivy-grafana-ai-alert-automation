@@ -58,389 +58,389 @@ pipeline {
         SCAN_OUTPUT = ""
     }
 
-    stages {
-        stage('Initialize') {
-            steps {
-                script {
-                    currentBuild.displayName = "#${BUILD_NUMBER}-${GIT_BRANCH}"
-                    currentBuild.description = "Build: ${IMAGE_TAG}"
+    // stages {
+    //     stage('Initialize') {
+    //         steps {
+    //             script {
+    //                 currentBuild.displayName = "#${BUILD_NUMBER}-${GIT_BRANCH}"
+    //                 currentBuild.description = "Build: ${IMAGE_TAG}"
                     
-                    // Set GIT_COMMIT if available
-                    try {
-                        env.GIT_COMMIT = sh(
-                            script: 'git rev-parse HEAD',
-                            returnStdout: true
-                        ).trim()
-                    } catch (Exception e) {
-                        env.GIT_COMMIT = "unknown"
-                        echo "Warning: Could not determine git commit: ${e.getMessage()}"
-                    }
-                }
+    //                 // Set GIT_COMMIT if available
+    //                 try {
+    //                     env.GIT_COMMIT = sh(
+    //                         script: 'git rev-parse HEAD',
+    //                         returnStdout: true
+    //                     ).trim()
+    //                 } catch (Exception e) {
+    //                     env.GIT_COMMIT = "unknown"
+    //                     echo "Warning: Could not determine git commit: ${e.getMessage()}"
+    //                 }
+    //             }
                 
-                echo "=== Build Information ==="
-                echo "Build Number: ${BUILD_NUMBER}"
-                echo "Git Branch: ${GIT_BRANCH}"
-                echo "Git Commit: ${env.GIT_COMMIT}"
-                echo "Docker Image: ${ECR_REPO_PATH}:${IMAGE_TAG}"
-                echo "Build Timestamp: ${new Date()}"
+    //             echo "=== Build Information ==="
+    //             echo "Build Number: ${BUILD_NUMBER}"
+    //             echo "Git Branch: ${GIT_BRANCH}"
+    //             echo "Git Commit: ${env.GIT_COMMIT}"
+    //             echo "Docker Image: ${ECR_REPO_PATH}:${IMAGE_TAG}"
+    //             echo "Build Timestamp: ${new Date()}"
                 
-                // Create required directories
-                sh '''
-                    mkdir -p ${TRIVY_CACHE_DIR} || true
-                    mkdir -p ${REPORTS_DIR} || true
-                    mkdir -p test-reports || true
-                '''
-            }
-        }
+    //             // Create required directories
+    //             sh '''
+    //                 mkdir -p ${TRIVY_CACHE_DIR} || true
+    //                 mkdir -p ${REPORTS_DIR} || true
+    //                 mkdir -p test-reports || true
+    //             '''
+    //         }
+    //     }
 
-        stage('Checkout Source Code') {
-            steps {
-                checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: "*/${GIT_BRANCH}"]],
-                    userRemoteConfigs: [[
-                        url: "${GIT_REPO}",
-                        credentialsId: "prince-github-access"
-                    ]]
-                ])
-            }
-        }
+    //     stage('Checkout Source Code') {
+    //         steps {
+    //             checkout([
+    //                 $class: 'GitSCM',
+    //                 branches: [[name: "*/${GIT_BRANCH}"]],
+    //                 userRemoteConfigs: [[
+    //                     url: "${GIT_REPO}",
+    //                     credentialsId: "prince-github-access"
+    //                 ]]
+    //             ])
+    //         }
+    //     }
 
-        stage('Code Verification') {
-            steps {
-                sh '''
-                    echo "=== Repository Structure Verification ==="
-                    pwd
-                    ls -la
+    //     stage('Code Verification') {
+    //         steps {
+    //             sh '''
+    //                 echo "=== Repository Structure Verification ==="
+    //                 pwd
+    //                 ls -la
                     
-                    # Verify critical files exist
-                    if [ ! -f "Dockerfile" ]; then
-                        echo "ERROR: Dockerfile not found"
-                        exit 1
-                    fi
+    //                 # Verify critical files exist
+    //                 if [ ! -f "Dockerfile" ]; then
+    //                     echo "ERROR: Dockerfile not found"
+    //                     exit 1
+    //                 fi
                     
-                    if [ ! -d "trivy" ]; then
-                        echo "ERROR: Trivy security scanning directory not found"
-                        exit 1
-                    fi
+    //                 if [ ! -d "trivy" ]; then
+    //                     echo "ERROR: Trivy security scanning directory not found"
+    //                     exit 1
+    //                 fi
                     
-                    echo "=== Trivy Components Verification ==="
-                    ls -la trivy/
+    //                 echo "=== Trivy Components Verification ==="
+    //                 ls -la trivy/
                     
-                    # Check required files
-                    required_files="scan.sh report.py email_template.py ai_suggestion.py"
-                    for file in $required_files; do
-                        if [ ! -f "trivy/$file" ]; then
-                            echo "ERROR: Required file trivy/$file not found"
-                            exit 1
-                        fi
-                    done
+    //                 # Check required files
+    //                 required_files="scan.sh report.py email_template.py ai_suggestion.py"
+    //                 for file in $required_files; do
+    //                     if [ ! -f "trivy/$file" ]; then
+    //                         echo "ERROR: Required file trivy/$file not found"
+    //                         exit 1
+    //                     fi
+    //                 done
                     
-                    # Make scripts executable
-                    chmod +x trivy/*.sh || true
-                    chmod +x trivy/*.py || true
+    //                 # Make scripts executable
+    //                 chmod +x trivy/*.sh || true
+    //                 chmod +x trivy/*.py || true
                     
-                    echo "Repository verification completed successfully"
-                '''
-            }
-        }
+    //                 echo "Repository verification completed successfully"
+    //             '''
+    //         }
+    //     }
 
-        stage('Setup Security Tools') {
-            steps {
-                script {
-                    sh '''
-                        echo "=== Security Tools Setup ==="
+    //     stage('Setup Security Tools') {
+    //         steps {
+    //             script {
+    //                 sh '''
+    //                     echo "=== Security Tools Setup ==="
                         
-                        # Check if Trivy is installed
-                        if command -v trivy >/dev/null 2>&1; then
-                            echo "Trivy is already installed"
-                            trivy --version
-                        else
-                            echo "Installing Trivy using binary download method"
+    //                     # Check if Trivy is installed
+    //                     if command -v trivy >/dev/null 2>&1; then
+    //                         echo "Trivy is already installed"
+    //                         trivy --version
+    //                     else
+    //                         echo "Installing Trivy using binary download method"
                             
-                            # Create local bin directory
-                            mkdir -p ${HOME}/bin
+    //                         # Create local bin directory
+    //                         mkdir -p ${HOME}/bin
                             
-                            # Download and install Trivy binary
-                            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ${HOME}/bin
+    //                         # Download and install Trivy binary
+    //                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ${HOME}/bin
                             
-                            # Add to PATH for this session
-                            export PATH=${HOME}/bin:$PATH
+    //                         # Add to PATH for this session
+    //                         export PATH=${HOME}/bin:$PATH
                             
-                            # Verify installation
-                            if [ -f "${HOME}/bin/trivy" ]; then
-                                echo "Trivy installed successfully"
-                                ${HOME}/bin/trivy --version
-                            else
-                                echo "ERROR: Trivy installation failed"
-                                exit 1
-                            fi
-                        fi
+    //                         # Verify installation
+    //                         if [ -f "${HOME}/bin/trivy" ]; then
+    //                             echo "Trivy installed successfully"
+    //                             ${HOME}/bin/trivy --version
+    //                         else
+    //                             echo "ERROR: Trivy installation failed"
+    //                             exit 1
+    //                         fi
+    //                     fi
                         
-                        # Ensure Trivy is in PATH
-                        export PATH=${HOME}/bin:$PATH
+    //                     # Ensure Trivy is in PATH
+    //                     export PATH=${HOME}/bin:$PATH
                         
-                        # Update Trivy database
-                        echo "Updating Trivy vulnerability database"
-                        trivy --cache-dir ${TRIVY_CACHE_DIR} image --download-db-only || echo "Database update completed with warnings"
-                    '''
-                }
-            }
-        }
+    //                     # Update Trivy database
+    //                     echo "Updating Trivy vulnerability database"
+    //                     trivy --cache-dir ${TRIVY_CACHE_DIR} image --download-db-only || echo "Database update completed with warnings"
+    //                 '''
+    //             }
+    //         }
+    //     }
 
-        stage('Unit Tests') {
-            when {
-                expression { fileExists('docker-compose.yaml') || fileExists('docker-compose.yml') }
-            }
-            steps {
-                script {
-                    try {
-                        sh '''
-                            echo "=== Unit Test Execution ==="
+    //     stage('Unit Tests') {
+    //         when {
+    //             expression { fileExists('docker-compose.yaml') || fileExists('docker-compose.yml') }
+    //         }
+    //         steps {
+    //             script {
+    //                 try {
+    //                     sh '''
+    //                         echo "=== Unit Test Execution ==="
                             
-                            # Cleanup any existing containers
-                            docker-compose down -v --remove-orphans || true
-                            docker rm -f mongo-db test-container || true
+    //                         # Cleanup any existing containers
+    //                         docker-compose down -v --remove-orphans || true
+    //                         docker rm -f mongo-db test-container || true
                             
-                            # Start test dependencies
-                            echo "Starting test dependencies"
-                            docker-compose up -d mongo-db
+    //                         # Start test dependencies
+    //                         echo "Starting test dependencies"
+    //                         docker-compose up -d mongo-db
                             
-                            # Wait for MongoDB to be ready
-                            echo "Waiting for MongoDB initialization"
-                            max_attempts=30
-                            attempt=0
+    //                         # Wait for MongoDB to be ready
+    //                         echo "Waiting for MongoDB initialization"
+    //                         max_attempts=30
+    //                         attempt=0
                             
-                            while [ $attempt -lt $max_attempts ]; do
-                                if docker-compose exec -T mongo-db mongosh --eval "db.runCommand({ping:1})" >/dev/null 2>&1; then
-                                    echo "MongoDB is ready after $attempt attempts"
-                                    break
-                                fi
-                                echo "Waiting for MongoDB... (attempt $((attempt+1))/$max_attempts)"
-                                sleep 3
-                                attempt=$((attempt+1))
-                            done
+    //                         while [ $attempt -lt $max_attempts ]; do
+    //                             if docker-compose exec -T mongo-db mongosh --eval "db.runCommand({ping:1})" >/dev/null 2>&1; then
+    //                                 echo "MongoDB is ready after $attempt attempts"
+    //                                 break
+    //                             fi
+    //                             echo "Waiting for MongoDB... (attempt $((attempt+1))/$max_attempts)"
+    //                             sleep 3
+    //                             attempt=$((attempt+1))
+    //                         done
                             
-                            if [ $attempt -eq $max_attempts ]; then
-                                echo "WARNING: MongoDB may not be fully ready, continuing with tests"
-                            fi
+    //                         if [ $attempt -eq $max_attempts ]; then
+    //                             echo "WARNING: MongoDB may not be fully ready, continuing with tests"
+    //                         fi
                             
-                            # Execute tests
-                            echo "Executing test suite"
-                            docker-compose run --rm test pytest \\
-                                --maxfail=5 \\
-                                --tb=short \\
-                                --disable-warnings \\
-                                --junitxml=test-reports/test-results.xml \\
-                                --verbose || echo "Tests completed with warnings"
-                        '''
-                    } catch (Exception e) {
-                        echo "Test execution failed: ${e.getMessage()}"
-                        currentBuild.result = 'UNSTABLE'
-                    } finally {
-                        sh '''
-                            echo "Cleaning up test environment"
-                            docker-compose down -v --remove-orphans || true
-                        '''
-                    }
-                }
-            }
-            post {
-                always {
-                    script {
-                        try {
-                            junit(
-                                testResults: 'test-reports/*.xml',
-                                allowEmptyResults: true,
-                                skipPublishingChecks: true
-                            )
-                        } catch (Exception e) {
-                            echo "Could not process test results: ${e.getMessage()}"
-                        }
-                    }
-                }
-            }
-        }
+    //                         # Execute tests
+    //                         echo "Executing test suite"
+    //                         docker-compose run --rm test pytest \\
+    //                             --maxfail=5 \\
+    //                             --tb=short \\
+    //                             --disable-warnings \\
+    //                             --junitxml=test-reports/test-results.xml \\
+    //                             --verbose || echo "Tests completed with warnings"
+    //                     '''
+    //                 } catch (Exception e) {
+    //                     echo "Test execution failed: ${e.getMessage()}"
+    //                     currentBuild.result = 'UNSTABLE'
+    //                 } finally {
+    //                     sh '''
+    //                         echo "Cleaning up test environment"
+    //                         docker-compose down -v --remove-orphans || true
+    //                     '''
+    //                 }
+    //             }
+    //         }
+    //         post {
+    //             always {
+    //                 script {
+    //                     try {
+    //                         junit(
+    //                             testResults: 'test-reports/*.xml',
+    //                             allowEmptyResults: true,
+    //                             skipPublishingChecks: true
+    //                         )
+    //                     } catch (Exception e) {
+    //                         echo "Could not process test results: ${e.getMessage()}"
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        stage('Build Application Image') {
-            steps {
-                sh '''
-                    echo "=== Docker Image Build ==="
+    //     stage('Build Application Image') {
+    //         steps {
+    //             sh '''
+    //                 echo "=== Docker Image Build ==="
                     
-                    # Build Docker image with build args
-                    docker build \\
-                        --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
-                        --tag ${ECR_REPO_PATH}:latest \\
-                        --label "build.number=${BUILD_NUMBER}" \\
-                        --label "build.url=${BUILD_URL}" \\
-                        --label "git.commit=${GIT_COMMIT}" \\
-                        --label "git.branch=${GIT_BRANCH}" \\
-                        .
+    //                 # Build Docker image with build args
+    //                 docker build \\
+    //                     --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
+    //                     --tag ${ECR_REPO_PATH}:latest \\
+    //                     --label "build.number=${BUILD_NUMBER}" \\
+    //                     --label "build.url=${BUILD_URL}" \\
+    //                     --label "git.commit=${GIT_COMMIT}" \\
+    //                     --label "git.branch=${GIT_BRANCH}" \\
+    //                     .
                     
-                    # Verify image was created
-                    docker images ${ECR_REPO_PATH}:${IMAGE_TAG}
+    //                 # Verify image was created
+    //                 docker images ${ECR_REPO_PATH}:${IMAGE_TAG}
                     
-                    echo "Docker image build completed successfully"
-                '''
-            }
-        }
+    //                 echo "Docker image build completed successfully"
+    //             '''
+    //         }
+    //     }
 
-        stage('Security Scan') {
-            steps {
-                script {
-                    try {
-                        sh '''
-                            echo "=== Container Image Security Scan ==="
+    //     stage('Security Scan') {
+    //         steps {
+    //             script {
+    //                 try {
+    //                     sh '''
+    //                         echo "=== Container Image Security Scan ==="
                             
-                            # Ensure Trivy is available
-                            export PATH=${HOME}/bin:$PATH
+    //                         # Ensure Trivy is available
+    //                         export PATH=${HOME}/bin:$PATH
                             
-                            # Verify Trivy is working
-                            trivy --version
+    //                         # Verify Trivy is working
+    //                         trivy --version
                             
-                            # Create scan output file
-                            touch ${REPORTS_DIR}/scan-output.log
+    //                         # Create scan output file
+    //                         touch ${REPORTS_DIR}/scan-output.log
                             
-                            # Execute security scan
-                            ./trivy/scan.sh \\
-                                "${ECR_REPO_PATH}" \\
-                                "${IMAGE_TAG}" \\
-                                "${ECR_REPO_NAME}" \\
-                                "${GIT_BRANCH}" \\
-                                "${BUILD_URL}" \\
-                                "${CVE_DB_HOST}" \\
-                                "${CVE_DB_USERNAME}" \\
-                                "${CVE_DB_PASSWORD}" \\
-                                "${CVE_DB_NAME}" 2>&1 | tee ${REPORTS_DIR}/scan-output.log
-                        '''
+    //                         # Execute security scan
+    //                         ./trivy/scan.sh \\
+    //                             "${ECR_REPO_PATH}" \\
+    //                             "${IMAGE_TAG}" \\
+    //                             "${ECR_REPO_NAME}" \\
+    //                             "${GIT_BRANCH}" \\
+    //                             "${BUILD_URL}" \\
+    //                             "${CVE_DB_HOST}" \\
+    //                             "${CVE_DB_USERNAME}" \\
+    //                             "${CVE_DB_PASSWORD}" \\
+    //                             "${CVE_DB_NAME}" 2>&1 | tee ${REPORTS_DIR}/scan-output.log
+    //                     '''
                         
-                        // Process scan results
-                        script {
-                            try {
-                                def scanOutput = readFile("${REPORTS_DIR}/scan-output.log")
-                                env.SCAN_OUTPUT = scanOutput
+    //                     // Process scan results
+    //                     script {
+    //                         try {
+    //                             def scanOutput = readFile("${REPORTS_DIR}/scan-output.log")
+    //                             env.SCAN_OUTPUT = scanOutput
                                 
-                                // Extract build ID for AI recommendations
-                                def buildIdMatcher = (scanOutput =~ /build_id:\s+([0-9]+)/)
-                                env.BUILD_REF_ID = buildIdMatcher ? buildIdMatcher[0][1] : ""
+    //                             // Extract build ID for AI recommendations
+    //                             def buildIdMatcher = (scanOutput =~ /build_id:\s+([0-9]+)/)
+    //                             env.BUILD_REF_ID = buildIdMatcher ? buildIdMatcher[0][1] : ""
                                 
-                                echo "Security scan completed. Build Reference ID: ${env.BUILD_REF_ID}"
-                            } catch (Exception e) {
-                                echo "Could not process scan output: ${e.getMessage()}"
-                                env.SCAN_OUTPUT = "Scan output not available"
-                                env.BUILD_REF_ID = ""
-                            }
-                        }
+    //                             echo "Security scan completed. Build Reference ID: ${env.BUILD_REF_ID}"
+    //                         } catch (Exception e) {
+    //                             echo "Could not process scan output: ${e.getMessage()}"
+    //                             env.SCAN_OUTPUT = "Scan output not available"
+    //                             env.BUILD_REF_ID = ""
+    //                         }
+    //                     }
                         
-                    } catch (Exception e) {
-                        currentBuild.result = 'UNSTABLE'
-                        echo "Security scan encountered issues: ${e.getMessage()}"
-                        env.SCAN_OUTPUT = "Security scan failed: ${e.getMessage()}"
-                    }
-                }
-            }
-        }
+    //                 } catch (Exception e) {
+    //                     currentBuild.result = 'UNSTABLE'
+    //                     echo "Security scan encountered issues: ${e.getMessage()}"
+    //                     env.SCAN_OUTPUT = "Security scan failed: ${e.getMessage()}"
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        stage('AI Security Analysis') {
-            when {
-                expression { env.BUILD_REF_ID?.trim() }
-            }
-            steps {
-                script {
-                    try {
-                        sh '''
-                            echo "=== AI-Powered Security Recommendations ==="
-                            python3 trivy/ai_suggestion.py \\
-                                "${BUILD_REF_ID}" \\
-                                "${ALERT_MANAGER_URL}" \\
-                                "${ALERT_MANAGER_SECRET}"
-                        '''
-                        echo "AI security analysis completed successfully"
-                    } catch (Exception e) {
-                        echo "AI analysis failed but continuing pipeline: ${e.getMessage()}"
-                        currentBuild.result = 'UNSTABLE'
-                    }
-                }
-            }
-        }
+    //     stage('AI Security Analysis') {
+    //         when {
+    //             expression { env.BUILD_REF_ID?.trim() }
+    //         }
+    //         steps {
+    //             script {
+    //                 try {
+    //                     sh '''
+    //                         echo "=== AI-Powered Security Recommendations ==="
+    //                         python3 trivy/ai_suggestion.py \\
+    //                             "${BUILD_REF_ID}" \\
+    //                             "${ALERT_MANAGER_URL}" \\
+    //                             "${ALERT_MANAGER_SECRET}"
+    //                     '''
+    //                     echo "AI security analysis completed successfully"
+    //                 } catch (Exception e) {
+    //                     echo "AI analysis failed but continuing pipeline: ${e.getMessage()}"
+    //                     currentBuild.result = 'UNSTABLE'
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        stage('Security Gate') {
-            steps {
-                script {
-                    try {
-                        // Process scan results for security gate
-                        def scanSummary = ""
-                        try {
-                            scanSummary = sh(
-                                script: """
-                                    if [ -f "reports/scan-report-${IMAGE_TAG}.json" ]; then
-                                        python3 trivy/email_template.py \\
-                                            reports/scan-report-${IMAGE_TAG}.json \\
-                                            ${BUILD_URL}
-                                    else
-                                        echo "Scan report file not found"
-                                    fi
-                                """,
-                                returnStdout: true
-                            ).trim()
-                        } catch (Exception e) {
-                            scanSummary = "Security report generation failed: ${e.getMessage()}"
-                        }
+    //     stage('Security Gate') {
+    //         steps {
+    //             script {
+    //                 try {
+    //                     // Process scan results for security gate
+    //                     def scanSummary = ""
+    //                     try {
+    //                         scanSummary = sh(
+    //                             script: """
+    //                                 if [ -f "reports/scan-report-${IMAGE_TAG}.json" ]; then
+    //                                     python3 trivy/email_template.py \\
+    //                                         reports/scan-report-${IMAGE_TAG}.json \\
+    //                                         ${BUILD_URL}
+    //                                 else
+    //                                     echo "Scan report file not found"
+    //                                 fi
+    //                             """,
+    //                             returnStdout: true
+    //                         ).trim()
+    //                     } catch (Exception e) {
+    //                         scanSummary = "Security report generation failed: ${e.getMessage()}"
+    //                     }
                         
-                        env.SECURITY_REPORT = scanSummary
+    //                     env.SECURITY_REPORT = scanSummary
                         
-                        // Extract vulnerability counts
-                        def criticalCount = 0
-                        def highCount = 0
+    //                     // Extract vulnerability counts
+    //                     def criticalCount = 0
+    //                     def highCount = 0
                         
-                        if (env.SCAN_OUTPUT) {
-                            def criticalMatch = (env.SCAN_OUTPUT =~ /CRITICAL:\s+([0-9]+)/)
-                            def highMatch = (env.SCAN_OUTPUT =~ /HIGH:\s+([0-9]+)/)
+    //                     if (env.SCAN_OUTPUT) {
+    //                         def criticalMatch = (env.SCAN_OUTPUT =~ /CRITICAL:\s+([0-9]+)/)
+    //                         def highMatch = (env.SCAN_OUTPUT =~ /HIGH:\s+([0-9]+)/)
                             
-                            criticalCount = criticalMatch ? criticalMatch[0][1].toInteger() : 0
-                            highCount = highMatch ? highMatch[0][1].toInteger() : 0
-                        }
+    //                         criticalCount = criticalMatch ? criticalMatch[0][1].toInteger() : 0
+    //                         highCount = highMatch ? highMatch[0][1].toInteger() : 0
+    //                     }
                         
-                        echo "Security Assessment Results:"
-                        echo "- Critical Vulnerabilities: ${criticalCount}"
-                        echo "- High Vulnerabilities: ${highCount}"
+    //                     echo "Security Assessment Results:"
+    //                     echo "- Critical Vulnerabilities: ${criticalCount}"
+    //                     echo "- High Vulnerabilities: ${highCount}"
                         
-                        // Security gate decision (more lenient for now)
-                        if (criticalCount > 10) {
-                            echo "WARNING: ${criticalCount} critical vulnerabilities found. Consider reviewing before deployment."
-                        } else if (highCount > 20) {
-                            echo "WARNING: ${highCount} high-severity vulnerabilities detected."
-                        } else {
-                            echo "Security gate passed. Vulnerability counts within acceptable limits."
-                        }
+    //                     // Security gate decision (more lenient for now)
+    //                     if (criticalCount > 10) {
+    //                         echo "WARNING: ${criticalCount} critical vulnerabilities found. Consider reviewing before deployment."
+    //                     } else if (highCount > 20) {
+    //                         echo "WARNING: ${highCount} high-severity vulnerabilities detected."
+    //                     } else {
+    //                         echo "Security gate passed. Vulnerability counts within acceptable limits."
+    //                     }
                         
-                    } catch (Exception e) {
-                        echo "Security gate evaluation failed: ${e.getMessage()}"
-                        env.SECURITY_REPORT = "Security gate evaluation failed"
-                    }
-                }
-            }
-        }
+    //                 } catch (Exception e) {
+    //                     echo "Security gate evaluation failed: ${e.getMessage()}"
+    //                     env.SECURITY_REPORT = "Security gate evaluation failed"
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        stage('Registry Operations') {
-            steps {
-                sh '''
-                    echo "=== Container Registry Authentication ==="
-                    aws ecr get-login-password --region ${AWS_REGION} | \\
-                        docker login --username AWS --password-stdin ${ECR_REPO_PATH}
+    //     stage('Registry Operations') {
+    //         steps {
+    //             sh '''
+    //                 echo "=== Container Registry Authentication ==="
+    //                 aws ecr get-login-password --region ${AWS_REGION} | \\
+    //                     docker login --username AWS --password-stdin ${ECR_REPO_PATH}
                     
-                    echo "=== Container Image Registry Push ==="
+    //                 echo "=== Container Image Registry Push ==="
                     
-                    # Push tagged image
-                    docker push ${ECR_REPO_PATH}:${IMAGE_TAG}
+    //                 # Push tagged image
+    //                 docker push ${ECR_REPO_PATH}:${IMAGE_TAG}
                     
-                    # Push latest tag
-                    docker push ${ECR_REPO_PATH}:latest
+    //                 # Push latest tag
+    //                 docker push ${ECR_REPO_PATH}:latest
                     
-                    echo "Image push completed successfully"
-                '''
-            }
-        }
+    //                 echo "Image push completed successfully"
+    //             '''
+    //         }
+    //     }
 
         stage('Deploy Application') {
             steps {

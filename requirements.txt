@@ -14,3 +14,4 @@ psycopg2-binary
 pytest
 requests
 mongomock
+requests>=2.31.0

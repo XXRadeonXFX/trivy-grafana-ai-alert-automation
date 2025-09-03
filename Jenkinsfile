@@ -11,8 +11,8 @@ pipeline {
     GIT_BRANCH = 'main'
 
     // ---- Test inputs ----
-    BUILD_REF_ID      = '26'
-    AI_ENGINE         = 'openai'          // or 'gemini'
+    BUILD_REF_ID      = '3'
+    AI_ENGINE         = 'gemini'          // or 'gemini'
     AI_MODEL          = ''                // optional; leave blank to use engine default
     ALERT_MANAGER_URL = 'https://alerts.thakurprince.com'
     ALERT_SECRET      = 'yourapisecret'   // hardcoded per your request

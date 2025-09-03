@@ -16,7 +16,7 @@ pipeline {
         // Infrastructure Configuration
         EC2_SSH = "prince-ec2"
         EC2_USER = "ubuntu"
-        EC2_HOST = "15.206.75.104"
+        EC2_HOST = "13.201.45.17"
         AWS_REGION = "ap-south-1"
         
         // Container Registry Configuration

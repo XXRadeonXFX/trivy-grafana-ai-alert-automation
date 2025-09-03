@@ -256,21 +256,21 @@ GET /email-test
 
 ```
 POST /trigger-daily-alert
-Header: api_secret=yourapisecret
+Header: api-secret=yourapisecret
 ```
 
 - Weekly Alert (POST): Sends an email summary of the last 7 days.
 
 ```
 POST /trigger-weekly-alert
-Header: api_secret=yourapisecret
+Header: api-secret=yourapisecret
 ```
 
 - AI Suggestions (POST): This API will be called from the Jenkins Stage
 
 ```
 POST /generate-ai-suggestion
-Header: api_secret=yourapisecret
+Header: api-secret=yourapisecret
 Body:
 {
   "build_id": 123,

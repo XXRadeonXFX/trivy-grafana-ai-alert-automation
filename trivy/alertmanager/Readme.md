@@ -65,7 +65,7 @@ SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=prince.beats01@gmail.com
 SMTP_PASS=XXXXXXXXXXX
-ALERT_TO_EMAILS=prince.thakur24051996@gmail.com
+ALERT_TO_EMAILS=prince.thakurXXXXX@gmail.com
 
 # Grafana Dashboard links
 GRAFANA_URL=http://4.240.98.78:3000

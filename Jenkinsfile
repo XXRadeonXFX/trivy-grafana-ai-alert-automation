@@ -4,7 +4,7 @@ pipeline {
     environment {
         GIT_REPO = "https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation"
         GIT_BRANCH = "main"
-        EC2_SSH = "thiru-ec2"
+        EC2_SSH = "prince-ec2"
         EC2_USER = "ubuntu"
         EC2_HOST = "13.201.59.34"
         AWS_REGION = "ap-south-1"

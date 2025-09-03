@@ -52,7 +52,55 @@ pipeline {
                 sh'''
                     pwd
                     ls -la
+                    echo "=== Checking if Trivy folder exists ==="
+                    if [ -d "trivy" ]; then
+                        echo "✅ Trivy folder found"
+                        ls -la trivy/
+                    else
+                        echo "❌ Trivy folder not found"
+                    fi
                 '''
+            }
+        }
+
+        stage("Install Trivy") {
+            steps {
+                script {
+                    // Check if Trivy is installed, if not install it
+                    sh '''
+                        echo "=== Checking Trivy Installation ==="
+                        
+                        if command -v trivy >/dev/null 2>&1; then
+                            echo "✅ Trivy is already installed"
+                            trivy --version
+                        else
+                            echo "❌ Trivy not found. Installing Trivy..."
+                            
+                            # Update system
+                            sudo apt-get update
+                            
+                            # Install required packages
+                            sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+                            
+                            # Add Trivy GPG key
+                            wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+                            
+                            # Add Trivy repository
+                            echo "deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee -a /etc/apt/sources.list.d/trivy.list
+                            
+                            # Update package list and install Trivy
+                            sudo apt-get update
+                            sudo apt-get install -y trivy
+                            
+                            echo "✅ Trivy installation completed"
+                            trivy --version
+                        fi
+                        
+                        echo "=== Verifying Trivy Installation ==="
+                        which trivy
+                        trivy --version
+                    '''
+                }
             }
         }
         
@@ -117,7 +165,6 @@ pipeline {
                 sh """
                     echo "Docker Build Image.."
                     docker build -t ${ECR_REPO_PATH}:${IMAGE_TAG} .
-
                 """
             }
         }
@@ -125,7 +172,26 @@ pipeline {
         stage("Scan the Image") {
             steps {
                 script {
-                    sh "chmod +x ./trivy/scan.sh"
+                    sh '''
+                        echo "=== Preparing Trivy Scan ==="
+                        
+                        # Verify Trivy is available
+                        if ! command -v trivy >/dev/null 2>&1; then
+                            echo "❌ Error: Trivy is still not available in PATH"
+                            echo "Current PATH: $PATH"
+                            echo "Trivy location:"
+                            find /usr -name "trivy" 2>/dev/null || echo "Trivy not found in /usr"
+                            exit 1
+                        fi
+                        
+                        echo "✅ Trivy is available"
+                        trivy --version
+                        
+                        # Make scan script executable
+                        chmod +x ./trivy/scan.sh
+                        
+                        echo "=== Starting Image Scan ==="
+                    '''
 
                     // Capture scan output
                     def fullOutput = sh(
@@ -153,8 +219,6 @@ pipeline {
                     env.REF_BUILD_ID = (refBuildId ? refBuildId[0][1] : "").toString()
 
                     echo "Reference Build ID: ${env.REF_BUILD_ID}"
-
-                    
                 }
             }
         }
@@ -174,7 +238,7 @@ pipeline {
         stage("Validate Vulnerability Outcome") {
             steps {
                 script {
-                    // Keep only the last 3 lines (your summary)
+                    // Keep only the summary lines
                     def result = env.FULL_RESULT.readLines().findAll {
                         it.startsWith("Project:") || it.startsWith("Image:") || it.startsWith("CRITICAL:") || it.startsWith("HIGH:")
                     }.join("\n")
@@ -243,7 +307,6 @@ pipeline {
                             ${ECR_REPO_PATH}:${IMAGE_TAG}
 
                             echo "Deployment done.."
-
                         '
                     """
                 }
@@ -273,20 +336,17 @@ pipeline {
                         --region ${AWS_REGION} \
                         --image-ids imageTag=\$item
                     done
-
                 """
             }
         }
-
-        
     }
 
     post {
         failure {
             echo 'Build or test failed. Sending notifications...'
             emailext(
-    subject: "❌ Deployment Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-    body: """\
+                subject: "❌ Deployment Failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """\
 <html>
 <body>
 <h3>${env.JOB_NAME} Deployment FAILED ❌</h3>
@@ -297,38 +357,21 @@ pipeline {
 <p style="font-size:16px; line-height:21px;"><strong>Docker Image:</strong> ${ECR_REPO_PATH}:${IMAGE_TAG}</p>
 <p style="font-size:16px; line-height:21px;"><strong>Failure Time:</strong> ${new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("Asia/Kolkata"))}</p>
 <p style="font-size:18px; line-height:25px;"><strong>🔎 Trivy Scan Report:</strong></p>
-${env.SCAN_RESULT}
+${env.SCAN_RESULT ?: 'Scan results not available due to earlier failure'}
+<p style="font-size:16px; line-height:21px;"><strong>Grafana Dashboard:</strong> <a href="http://4.240.98.78:3000">View Vulnerability Dashboard</a></p>
 <p style="font-size:16px; line-height:21px;"><a href="${env.BUILD_URL}">Click here to view full build logs</a></p>
 </body>
 </html>
 """,
-    mimeType: 'text/html',
-    to: "${ALERT_EMAIL}"
-)
-            script {
-                sh '''
-                    echo "===== Deployment Success Summary ====="
-                    echo "Build Number: ${BUILD_NUMBER}"
-                    echo "Docker Image: ${ECR_REPO_PATH}:${IMAGE_TAG}"
-                    echo "Deployment Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "===== Remove Old Images except last 2 ====="
-                    docker images \
-                    ${ECR_REPO_PATH} \
-                    --format "{{.Repository}}:{{.Tag}} {{.CreatedAt}}" | \
-                    sort -k2 | \
-                    head -n -2 2>/dev/null | \
-                    cut -d' ' -f1 | \
-                    xargs -r docker rmi
-                '''
-            }
-
+                mimeType: 'text/html',
+                to: "${ALERT_EMAIL}"
+            )
         }
         success {
             echo 'Build and deployment passed successfully!'
             emailext(
-    subject: "✅ Build Success: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
-    body: """\
+                subject: "✅ Build Success: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                body: """\
 <html>
 <body>
 <h3>${env.JOB_NAME} Build & Deployment SUCCEEDED ✅</h3>
@@ -337,34 +380,17 @@ ${env.SCAN_RESULT}
 <p style="font-size:16px; line-height:21px;"><strong>Branch:</strong> ${env.GIT_BRANCH}</p>
 <p style="font-size:16px; line-height:21px;"><strong>Git Repo:</strong> ${env.GIT_REPO}</p>
 <p style="font-size:16px; line-height:21px;"><strong>Docker Image:</strong> ${ECR_REPO_PATH}:${IMAGE_TAG}</p>
-<p style="font-size:16px; line-height:21px;"><strong>Failure Time:</strong> ${new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("Asia/Kolkata"))}</p>
+<p style="font-size:16px; line-height:21px;"><strong>Success Time:</strong> ${new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("Asia/Kolkata"))}</p>
 <p style="font-size:18px; line-height:25px;"><strong>🔎 Trivy Scan Report:</strong></p>
 ${env.SCAN_RESULT}
+<p style="font-size:16px; line-height:21px;"><strong>Grafana Dashboard:</strong> <a href="http://4.240.98.78:3000">View Vulnerability Dashboard</a></p>
 <p style="font-size:16px; line-height:21px;"><a href="${env.BUILD_URL}">Click here to view full build logs</a></p>
 </body>
 </html>
 """,
-    mimeType: 'text/html',
-    to: "${ALERT_EMAIL}"
-)
-
-            script {
-                sh '''
-                    echo "===== Deployment Success Summary ====="
-                    echo "Build Number: ${BUILD_NUMBER}"
-                    echo "Docker Image: ${ECR_REPO_PATH}:${IMAGE_TAG}"
-                    echo "Deployment Timestamp: $(date '+%Y-%m-%d %H:%M:%S')"
-
-                    echo "===== Remove Old Images except last 2 ====="
-                    docker images \
-                    ${ECR_REPO_PATH} \
-                    --format "{{.Repository}}:{{.Tag}} {{.CreatedAt}}" | \
-                    sort -k2 | \
-                    head -n -2 | \
-                    cut -d' ' -f1 | \
-                    xargs -r docker rmi
-                '''
-            }
+                mimeType: 'text/html',
+                to: "${ALERT_EMAIL}"
+            )
         }
     }
 }

@@ -7,15 +7,16 @@ pipeline {
   }
 
   environment {
+    // Repo that contains trivy/ai_suggestion.py
     GIT_REPO   = 'https://github.com/XXRadeonXFX/trivy-grafana-ai-alert-automation'
     GIT_BRANCH = 'master'
 
-    // ---- Test inputs ----
-    BUILD_REF_ID      = '3'
-    AI_ENGINE         = 'gemini'          // or 'gemini'
-    AI_MODEL          = 'gemini-2.0-flash'                // optional; leave blank to use engine default
-    ALERT_MANAGER_URL = 'https://alerts.thakurprince.com'
-    ALERT_SECRET      = 'yourapisecret'   // hardcoded per your request
+    // ---- TEST SETTINGS (edit as you like) ----
+    BUILD_REF_ID       = '3'
+    AI_ENGINE          = 'gemini'      // or 'gemini'
+    AI_MODEL           = 'gemini-2.0-flash'            // optional; leave empty to use engine default
+    ALERT_MANAGER_URL  = 'https://alerts.thakurprince.com'
+    ALERT_SECRET       = 'yourapisecret' // <-- hardcoded per your request
   }
 
   stages {
@@ -32,32 +33,32 @@ pipeline {
 
     stage('AI Security Analysis (TEST)') {
       steps {
-        // NOTE: single-quoted triple quotes => NO Groovy interpolation of $VARs
-        sh '''#!/usr/bin/env bash
+        sh """#!/usr/bin/env bash
 set -e
 mkdir -p reports
 
-# ensure Python + requests available
+# ensure Python + requests
 python3 --version || true
 python3 -m pip install --user -q --upgrade pip requests || true
-export PATH="$HOME/.local/bin:$PATH"
+export PATH="\$HOME/.local/bin:\$PATH"
 
+# optional model flag
 MODEL_OPT=""
-if [ -n "$AI_MODEL" ]; then
-  MODEL_OPT="--model $AI_MODEL"
+if [ -n "${AI_MODEL}" ]; then
+  MODEL_OPT="--model ${AI_MODEL}"
 fi
 
 echo "=== AI-Powered Security Recommendations (TEST) ==="
-python3 trivy/ai_suggestion.py \
-  "$BUILD_REF_ID" \
-  "$ALERT_MANAGER_URL" \
-  "$ALERT_SECRET" \
-  --engine "$AI_ENGINE" $MODEL_OPT \
-  --timeout 60 --retries 3 --log-level INFO --json-only \
+python3 trivy/ai_suggestion.py \\
+  "${BUILD_REF_ID}" \\
+  "${ALERT_MANAGER_URL}" \\
+  "${ALERT_SECRET}" \\
+  --engine "${AI_ENGINE}" \${MODEL_OPT} \\
+  --timeout 60 --retries 3 --log-level INFO --json-only \\
 | tee "reports/ai-suggestion-${BUILD_NUMBER}.json"
 
 echo "Saved: reports/ai-suggestion-${BUILD_NUMBER}.json"
-'''
+"""
       }
     }
   }

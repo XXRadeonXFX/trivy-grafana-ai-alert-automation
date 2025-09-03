@@ -16,7 +16,7 @@ pipeline {
         DOCKER_NETWORK = "app-network"
         ALERT_EMAIL = "prince.thakur24051996@gmail.com"
         CONTAINER_NAME= "user-api"
-        DATABASE_URL = credentials('mern-database')
+        DATABASE_URL = credentials('prince-mern-database')
         CVE_DB_HOST = credentials('CVE_DB_HOST')
         CVE_DB_USERNAME = credentials('CVE_DB_USERNAME')
         CVE_DB_PASSWORD = credentials('CVE_DB_PASSWORD')

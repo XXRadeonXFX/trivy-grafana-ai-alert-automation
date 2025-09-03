@@ -11,8 +11,8 @@ pipeline {
         ECR_REPO_PATH = "975050024946.dkr.ecr.ap-south-1.amazonaws.com/thirumalai-b10/user-api-trivy"
         ECR_REPO_NAME = "thirumalai-b10/user-api-trivy"
         IMAGE_TAG = "dev-${BUILD_NUMBER}"
-        AWS_ACCESS_KEY_ID = credentials('thiru-access-key-id')
-        AWS_SECRET_ACCESS_KEY = credentials('thiru-secret-access-key')
+        AWS_ACCESS_KEY_ID = credentials('prince-access-key-id')
+        AWS_SECRET_ACCESS_KEY = credentials('prince-secret-access-key')
         DOCKER_NETWORK = "app-network"
         ALERT_EMAIL = "prince.thakur24051996@gmail.com"
         CONTAINER_NAME= "user-api"

@@ -6,7 +6,7 @@ pipeline {
         GIT_BRANCH = "main"
         EC2_SSH = "prince-ec2"
         EC2_USER = "ubuntu"
-        EC2_HOST = "13.201.59.34"
+        EC2_HOST = "15.206.75.104"
         AWS_REGION = "ap-south-1"
         ECR_REPO_PATH = "975050024946.dkr.ecr.ap-south-1.amazonaws.com/prince-reg"
         ECR_REPO_NAME = "prince-reg"

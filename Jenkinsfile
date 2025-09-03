@@ -470,6 +470,12 @@ pipeline {
                                 echo 'Current user: '\\$(whoami)
                                 echo 'Current directory: '\\$(pwd)
                                 
+                                # Ensure curl & unzip exist (needed for AWS CLI install)
+                                if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+                                  sudo apt-get update -y
+                                  sudo apt-get install -y curl unzip
+                                fi
+                                
                                 # Check if AWS CLI is installed
                                 if ! command -v aws >/dev/null 2>&1; then
                                     echo 'Installing AWS CLI...'

@@ -43,6 +43,8 @@ pipeline {
         // Alert Manager Configuration
         ALERT_MANAGER_URL = "http://4.240.98.78:8000"
         ALERT_MANAGER_SECRET = "yourapisecret"
+        AI_ENGINE = "gemini"
+        AI_MODEL = "gemini-2.0-flash"
         
         // Notification Configuration
         ALERT_EMAIL = "prince.thakur24051996@gmail.com"
@@ -353,7 +355,10 @@ pipeline {
                             python3 trivy/ai_suggestion.py \\
                                 "${BUILD_REF_ID}" \\
                                 "${ALERT_MANAGER_URL}" \\
-                                "${ALERT_MANAGER_SECRET}"
+                                "${ALERT_MANAGER_SECRET}" \\
+                                --engine "$AI_ENGINE" \\
+                                --model "$AI_MODEL" \\
+                                --timeout 60 --retries 3 --log-level INFO --json-only
                         '''
                         echo "AI security analysis completed successfully"
                     } catch (Exception e) {

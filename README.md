@@ -1,5 +1,5 @@
 # Container Image Vulnerability Scanner
-Check out my Grafana dashboard []:(https://grafana.thakurprince.com](https://grafana.thakurprince.com/d/build-dashboard/build-dashboard?orgId=1&from=now-1h&to=now&timezone=browser&var-build_id=4&refresh=30s).
+- [Check out my Grafana dashboard](https://grafana.thakurprince.com](https://grafana.thakurprince.com/d/build-dashboard/build-dashboard?orgId=1&from=now-1h&to=now&timezone=browser&var-build_id=4&refresh=30s).
 
 ```
 username:admin

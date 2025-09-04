@@ -1,4 +1,5 @@
 # Container Image Vulnerability Scanner
+Check out my Grafana dashboard [Grafana Dashboard](https://grafana.thakurprince.com).
 
 ## Table of Contents
 1. [Project Overview](#project-overview)

@@ -1,6 +1,10 @@
 # Container Image Vulnerability Scanner
-Check out my Grafana dashboard [Grafana Dashboard](https://grafana.thakurprince.com).
+Check out my Grafana dashboard [Grafana Dashboard]([https://grafana.thakurprince.com](https://grafana.thakurprince.com/d/build-dashboard/build-dashboard?orgId=1&from=now-1h&to=now&timezone=browser&var-build_id=4&refresh=30s).
 
+```
+username:admin
+passowrd:1029384756
+```
 ## Table of Contents
 1. [Project Overview](#project-overview)
 2. [Project Goals](#project-goals)

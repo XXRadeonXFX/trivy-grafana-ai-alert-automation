@@ -1,14 +1,14 @@
 pipeline {
     agent any
 
-    options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 2, unit: 'HOURS')
-        retry(1)
-        skipDefaultCheckout(false)
-        timestamps()
-        ansiColor('xterm')
-    }
+    // options {
+    //     buildDiscarder(logRotator(numToKeepStr: '10'))
+    //     timeout(time: 2, unit: 'HOURS')
+    //     retry(1)
+    //     skipDefaultCheckout(false)
+    //     timestamps()
+    //     ansiColor('xterm')
+    // }
 
     environment {
         // Repository Configuration

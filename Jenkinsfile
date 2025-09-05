@@ -509,13 +509,18 @@ pipeline {
                                     # Use a more robust approach for capturing output and exit code
                                     set +e  # Temporarily disable exit on error
                                     
-                                    timeout 1800 trivy image \\
-                                        --cache-dir "${WORKSPACE}/trivy-cache" \\
-                                        --format json \\
-                                        --output "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" \\
-                                        --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \\
-                                        --exit-code 0 \\
-                                        "${ECR_REPO_PATH}:${IMAGE_TAG}" > "${REPORTS_DIR}/scan-output.log" 2>&1
+                                    timeout 1800 ./trivy/scan.sh \
+                                        "${ECR_REPO_PATH}" \
+                                        "${IMAGE_TAG}" \
+                                        "${ECR_REPO_NAME}" \
+                                        "${GIT_BRANCH}" \
+                                        "${BUILD_URL}" \
+                                        "${CVE_DB_HOST}" \
+                                        "${CVE_DB_USERNAME}" \
+                                        "${CVE_DB_PASSWORD}" \
+                                        "${CVE_DB_NAME}" \
+                                        "${ALERT_MANAGER_URL}" \
+                                        "${ALERT_MANAGER_SECRET}" 2>&1 | tee "${REPORTS_DIR}/scan-output.log"
                                     
                                     SCAN_EXIT_CODE=$?
                                     set -e  # Re-enable exit on error

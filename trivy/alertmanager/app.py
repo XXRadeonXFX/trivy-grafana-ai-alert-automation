@@ -337,14 +337,18 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
         model= request.model
         build_id = request.build_id
 
+        print(f"Processing AI suggestion request for build_id: {build_id}")
+
         # Count the Vulnerability
         check = check_vulnerability_count(build_id)
+        print(f"Vulnerability count check returned: {check}")
 
         if check >0:
 
-
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            
+            # Fixed query to use the correct column names
             select_query = """
                 SELECT id, project, image, tag, ci_url
                 FROM build_reports
@@ -353,11 +357,22 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
             cur.execute(select_query, (build_id,))
             row = cur.fetchone()
 
+            if not row:
+                cur.close()
+                conn.close()
+                print(f"No build found with id {build_id}")
+                return {
+                    "build_id": request.build_id,
+                    "ai_engine": request.ai_engine,
+                    "html_content": f"Build {build_id} not found in database"
+                }
+
             tag = row['tag']
             ci_url = row['ci_url']
 
             # Get the CVE lists
             cve_name = get_vuln_ids(build_id)
+            print(f"Retrieved CVEs: {cve_name[:100]}...")
 
             project_name = row['project']
             image_name= str(row['image'])+":"+str(row['tag'])
@@ -436,6 +451,9 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
             subject = f"🧠 Smart AI Alert: Vulnerability Fixes for {project_name} Build #{tag}"
             send_email(subject,email_html)
 
+            cur.close()
+            conn.close()
+
             return {
                     "build_id": request.build_id,
                     "ai_engine": request.ai_engine,
@@ -458,10 +476,24 @@ def check_vulnerability_count(build_id):
     conn = get_db_connection()
     cur = conn.cursor()
 
+    # First verify the build exists
+    build_check_query = """
+        SELECT id FROM build_reports WHERE id = %s
+    """
+    cur.execute(build_check_query, (build_id,))
+    build_exists = cur.fetchone()
+    
+    if not build_exists:
+        print(f"Build ID {build_id} not found in build_reports table")
+        cur.close()
+        conn.close()
+        return 0
+
+    # Count vulnerabilities for this build (excluding exceptions)
     query = """
         SELECT COUNT(DISTINCT vuln_id) AS vuln_count
         FROM trivy_results
-        WHERE build_id = %s
+        WHERE build_id = %s AND is_exception = 0
     """
     
     cur.execute(query, (build_id,))
@@ -471,6 +503,7 @@ def check_vulnerability_count(build_id):
     cur.close()
     conn.close()
     
+    print(f"Found {vuln_count} vulnerabilities for build_id {build_id}")
     return vuln_count
 
 #----- Get the List of CVE for AI suggestion ---
@@ -481,22 +514,36 @@ def get_vuln_ids(build_id):
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
+    # First verify the build exists
+    build_check_query = """
+        SELECT id FROM build_reports WHERE id = %s
+    """
+    cur.execute(build_check_query, (build_id,))
+    build_exists = cur.fetchone()
+    
+    if not build_exists:
+        print(f"Build ID {build_id} not found in build_reports table")
+        cur.close()
+        conn.close()
+        return ""
+
     query = """
         SELECT vuln_id
         FROM trivy_results
-        WHERE build_id = %s
+        WHERE build_id = %s AND is_exception = 0
     """
     
     cur.execute(query, (build_id,))
-    rows = cur.fetchall()  # each row is now a dict
+    rows = cur.fetchall()
 
     # Extract unique vuln_ids and sort
-    unique_vulns_set = {row['vuln_id'] for row in rows}
+    unique_vulns_set = {row['vuln_id'] for row in rows if row['vuln_id']}
     vuln_ids_str = ",".join(sorted(unique_vulns_set))
 
     cur.close()
     conn.close()
     
+    print(f"Found CVEs for build_id {build_id}: {vuln_ids_str[:100]}...")
     return vuln_ids_str
 
 #--- Save AI Recommendation to DB----
@@ -522,4 +569,4 @@ def update_ai_recommendation(build_id, html_content):
     cur.execute(update_query, (clean_text, html_content,build_id))
     conn.commit()
     cur.close()
-    conn.close() 
+    conn.close()

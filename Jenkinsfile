@@ -629,13 +629,20 @@ pipeline {
                                         
                                         // Verify scan report exists and has content
                                         if (fileExists("${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json")) {
-                                            def reportFile = new File("${WORKSPACE}/${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json")
-                                            if (reportFile.exists() && reportFile.length() > 100) {
-                                                echo "✓ Scan report verified: ${reportFile.length()} bytes"
+                                            def fileSize = sh(
+                                                script: "stat -c%s '${WORKSPACE}/${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json' 2>/dev/null || echo 0",
+                                                returnStdout: true
+                                            ).trim().toInteger()
+                                            
+                                            if (fileSize > 100) {
+                                                echo "✓ Scan report verified: ${fileSize} bytes"
                                             } else {
                                                 echo "WARNING: Scan report file is too small or empty"
                                                 currentBuild.result = 'UNSTABLE'
                                             }
+                                        } else {
+                                            echo "WARNING: Scan report JSON file not found"
+                                            currentBuild.result = 'UNSTABLE'
                                         } else {
                                             echo "WARNING: Scan report JSON file not found"
                                             currentBuild.result = 'UNSTABLE'

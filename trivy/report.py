@@ -277,7 +277,8 @@ try:
                                                status, primary_url, vendor_severity, timestamp, is_exception)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, [
-                    (build_id, jenkins_build_number, *row[1:]) for row in vuln_data
+                    (build_id, jenkins_build_number, v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9], v[10])
+                    for v in vuln_data
                 ])
                 debug_print(f"Inserted vulnerability batch {i//batch_size + 1}")
         

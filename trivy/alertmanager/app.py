@@ -350,9 +350,9 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
             
             # Fixed query to use the correct column names
             select_query = """
-                SELECT id, project, image, tag, ci_url
-                FROM build_reports
-                WHERE id = %s
+            SELECT id, project, image, tag, ci_url
+            FROM build_reports
+            WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s;
             """
             cur.execute(select_query, (build_id,))
             row = cur.fetchone()

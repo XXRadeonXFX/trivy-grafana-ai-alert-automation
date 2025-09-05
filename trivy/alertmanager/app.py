@@ -478,7 +478,8 @@ def check_vulnerability_count(build_id):
 
     # First verify the build exists
     build_check_query = """
-        SELECT id FROM build_reports WHERE id = %s
+        SELECT CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) AS id 
+        FROM build_reports WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s
     """
     cur.execute(build_check_query, (build_id,))
     build_exists = cur.fetchone()
@@ -491,9 +492,12 @@ def check_vulnerability_count(build_id):
 
     # Count vulnerabilities for this build (excluding exceptions)
     query = """
-        SELECT COUNT(DISTINCT vuln_id) AS vuln_count
-        FROM trivy_results
-        WHERE build_id = %s AND is_exception = 0
+        SELECT COUNT(DISTINCT A.vuln_id) AS vuln_count
+        FROM trivy_results AS A 
+	    JOIN build_reports AS B 
+		ON  A.build_id = B.id   
+		AND CAST(regexp_replace(B.tag, '[^0-9]', '', 'g') AS INT) = %s
+		AND A.is_exception = 0
     """
     
     cur.execute(query, (build_id,))
@@ -516,7 +520,7 @@ def get_vuln_ids(build_id):
 
     # First verify the build exists
     build_check_query = """
-        SELECT id FROM build_reports WHERE id = %s
+        SELECT CAST(regexp_replace(B.tag, '[^0-9]', '', 'g') AS INT) AS id FROM build_reports WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s
     """
     cur.execute(build_check_query, (build_id,))
     build_exists = cur.fetchone()
@@ -528,9 +532,12 @@ def get_vuln_ids(build_id):
         return ""
 
     query = """
-        SELECT vuln_id
-        FROM trivy_results
-        WHERE build_id = %s AND is_exception = 0
+        SELECT A.vuln_id vuln_id
+        FROM trivy_results AS A 
+	    JOIN build_reports AS B 
+		ON  A.build_id = B.id   
+		AND CAST(regexp_replace(B.tag, '[^0-9]', '', 'g') AS INT) = %s
+		AND A.is_exception = 0
     """
     
     cur.execute(query, (build_id,))

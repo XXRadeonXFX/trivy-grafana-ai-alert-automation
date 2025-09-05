@@ -273,10 +273,12 @@ try:
             for i in range(0, len(vuln_data), batch_size):
                 batch = vuln_data[i:i+batch_size]
                 cur.executemany("""
-                    INSERT INTO trivy_results (build_id, severity, vuln_id, pkg_name, installed, fixed,
+                    INSERT INTO trivy_results (build_id, jenkins_build_number, severity, vuln_id, pkg_name, installed, fixed,
                                                status, primary_url, vendor_severity, timestamp, is_exception)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """, batch)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, [
+                    (build_id, jenkins_build_number, *row[1:]) for row in vuln_data
+                ])
                 debug_print(f"Inserted vulnerability batch {i//batch_size + 1}")
         
         debug_print("Vulnerabilities inserted successfully")
@@ -294,12 +296,12 @@ try:
             for s in secrets:
                 try:
                     cur.execute("""
-                    INSERT INTO trivy_results (build_id, jenkins_build_number, severity, vuln_id, pkg_name, installed, fixed,
-                                               status, primary_url, vendor_severity, timestamp, is_exception)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-
+                        INSERT INTO trivy_secrets (build_id, jenkins_build_number, target, rule_id, category, severity, title,
+                                                   start_line, end_line, match, code, layer, timestamp)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     """, (
                         build_id,
+                        jenkins_build_number,
                         s.get("target"),
                         s.get("rule_id"),
                         s.get("category"),

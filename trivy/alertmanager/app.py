@@ -335,12 +335,12 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
     try:
         ai_engine = request.ai_engine
         model= request.model
-        build_id = request.build_id
+        jenkins_build_number = request.jenkins_build_number 
 
         print(f"Processing AI suggestion request for build_id: {build_id}")
 
         # Count the Vulnerability
-        check = check_vulnerability_count(build_id)
+        check = check_vulnerability_count(jenkins_build_number)
         print(f"Vulnerability count check returned: {check}")
 
         if check >0:
@@ -354,24 +354,24 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
             FROM build_reports
             WHERE jenkins_build_number = %s;
             """
-            cur.execute(select_query, (build_id,))
+            cur.execute(select_query, (jenkins_build_number,))
             row = cur.fetchone()
 
             if not row:
                 cur.close()
                 conn.close()
-                print(f"No build found with id {build_id}")
+                print(f"No build found with id {jenkins_build_number}")
                 return {
                     "build_id": request.build_id,
                     "ai_engine": request.ai_engine,
-                    "html_content": f"Build {build_id} not found in database"
+                    "html_content": f"Build {jenkins_build_number} not found in database"
                 }
 
             tag = row['tag']
             ci_url = row['ci_url']
 
             # Get the CVE lists
-            cve_name = get_vuln_ids(build_id)
+            cve_name = get_vuln_ids(jenkins_build_number)
             print(f"Retrieved CVEs: {cve_name[:100]}...")
 
             project_name = row['project']
@@ -438,7 +438,7 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
                 ai_text = ai_text[len("```html"): -3].strip()
 
             # Save Data to the DB
-            update_ai_recommendation(build_id,ai_text)
+            update_ai_recommendation(jenkins_build_number,ai_text)
 
             email_html = ""
             email_html += "<h2>📊 Vulnerability Fix - AI Recommendations </h2>"
@@ -469,7 +469,7 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
         raise HTTPException(status_code=500, detail="Error fetching API details")
 
 #----- Get the Count of CVE for AI suggestion ---
-def check_vulnerability_count(build_id):
+def check_vulnerability_count(jenkins_build_number):
     """
     Returns the count of unique vulnerabilities for the given build_id.
     """
@@ -512,7 +512,7 @@ def check_vulnerability_count(build_id):
     return vuln_count
 
 #----- Get the List of CVE for AI suggestion ---
-def get_vuln_ids(build_id):
+def get_vuln_ids(jenkins_build_number):
     """
     Returns a comma-separated string of unique vuln_id for the given build_id.
     """
@@ -557,7 +557,7 @@ def get_vuln_ids(build_id):
     return vuln_ids_str
 
 #--- Save AI Recommendation to DB----
-def update_ai_recommendation(build_id, html_content):
+def update_ai_recommendation(jenkins_build_number, html_content):
     # Parse HTML
     soup = BeautifulSoup(html_content, "html.parser")
     clean_text = soup.get_text(separator="\n", strip=True)

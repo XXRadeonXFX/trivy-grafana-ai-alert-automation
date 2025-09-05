@@ -337,7 +337,7 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
         model= request.model
         jenkins_build_number = request.jenkins_build_number 
 
-        print(f"Processing AI suggestion request for build_id: {build_id}")
+        print(f"Processing AI suggestion request for Jenkins Build: {jenkins_build_number}")
 
         # Count the Vulnerability
         check = check_vulnerability_count(jenkins_build_number)
@@ -362,7 +362,7 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
                 conn.close()
                 print(f"No build found with id {jenkins_build_number}")
                 return {
-                    "build_id": request.build_id,
+                    "jenkins_build_number": request.jenkins_build_number,
                     "ai_engine": request.ai_engine,
                     "html_content": f"Build {jenkins_build_number} not found in database"
                 }
@@ -455,12 +455,12 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
             conn.close()
 
             return {
-                    "build_id": request.build_id,
+                    "jenkins_build_number": request.jenkins_build_number,
                     "ai_engine": request.ai_engine,
                     "html_content": ai_text}
         else:
             return {
-                    "build_id": request.build_id,
+                    "jenkins_build_number": request.jenkins_build_number,
                     "ai_engine": request.ai_engine,
                     "html_content": "No vulnerabilities found 🎉"}
 
@@ -482,11 +482,11 @@ def check_vulnerability_count(jenkins_build_number):
         FROM build_reports 
 		WHERE jenkins_build_number = %s
     """
-    cur.execute(build_check_query, (build_id,))
+    cur.execute(build_check_query, (jenkins_build_number,))
     build_exists = cur.fetchone()
     
     if not build_exists:
-        print(f"Build ID {build_id} not found in build_reports table")
+        print(f"Build ID {jenkins_build_number} not found in build_reports table")
         cur.close()
         conn.close()
         return 0
@@ -501,14 +501,14 @@ def check_vulnerability_count(jenkins_build_number):
 		  AND A.is_exception = 0
     """
     
-    cur.execute(query, (build_id,))
+    cur.execute(query, (jenkins_build_number,))
     result = cur.fetchone()
     vuln_count = result[0] if result else 0
 
     cur.close()
     conn.close()
     
-    print(f"Found {vuln_count} vulnerabilities for build_id {build_id}")
+    print(f"Found {vuln_count} vulnerabilities for Jenkins Build {jenkins_build_number}")
     return vuln_count
 
 #----- Get the List of CVE for AI suggestion ---
@@ -525,11 +525,11 @@ def get_vuln_ids(jenkins_build_number):
 		FROM build_reports 
         WHERE jenkins_build_number  = %s
     """
-    cur.execute(build_check_query, (build_id,))
+    cur.execute(build_check_query, (jenkins_build_number,))
     build_exists = cur.fetchone()
     
     if not build_exists:
-        print(f"Build ID {build_id} not found in build_reports table")
+        print(f"Build ID {jenkins_build_number} not found in build_reports table")
         cur.close()
         conn.close()
         return ""
@@ -543,7 +543,7 @@ def get_vuln_ids(jenkins_build_number):
 		  AND A.is_exception = 0
     """
     
-    cur.execute(query, (build_id,))
+    cur.execute(query, (jenkins_build_number,))
     rows = cur.fetchall()
 
     # Extract unique vuln_ids and sort
@@ -553,7 +553,7 @@ def get_vuln_ids(jenkins_build_number):
     cur.close()
     conn.close()
     
-    print(f"Found CVEs for build_id {build_id}: {vuln_ids_str[:100]}...")
+    print(f"Found CVEs for Jenkins Build {jenkins_build_number}: {vuln_ids_str[:100]}...")
     return vuln_ids_str
 
 #--- Save AI Recommendation to DB----
@@ -576,7 +576,7 @@ def update_ai_recommendation(jenkins_build_number, html_content):
 
         WHERE jenkins_build_number = %s
     """
-    cur.execute(update_query, (clean_text, html_content,build_id))
+    cur.execute(update_query, (clean_text, html_content,jenkins_build_number))
     conn.commit()
     cur.close()
     conn.close()

@@ -663,9 +663,9 @@ pipeline {
                     }
         }
         stage('AI Security Analysis') {
-            // when {
-            //     expression { env.BUILD_REF_ID?.trim() }
-            // }
+            when {
+                expression { env.BUILD_REF_ID?.trim() }
+            }
             steps {
                 script {
                     try {

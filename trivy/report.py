@@ -107,7 +107,7 @@ for r in data.get("Results", []):
                 "title": s.get("Title"),
                 "start_line": s.get("StartLine"),  # Add start_line
                 "end_line": s.get("EndLine"),      # Add end_line
-                "match_line": s.get("Match"),
+                "match": s.get("Match"),
                 "code": s.get("Code"),             # Keep as JSON or None
                 "layer": s.get("Layer")            # Keep as JSON or None
             })

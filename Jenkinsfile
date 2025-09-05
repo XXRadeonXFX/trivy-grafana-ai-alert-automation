@@ -643,10 +643,7 @@ pipeline {
                                         } else {
                                             echo "WARNING: Scan report JSON file not found"
                                             currentBuild.result = 'UNSTABLE'
-                                        } else {
-                                            echo "WARNING: Scan report JSON file not found"
-                                            currentBuild.result = 'UNSTABLE'
-                                        }
+                                        } 
                                         
                                     } catch (Exception e) {
                                         echo "Error processing scan output: ${e.getMessage()}"

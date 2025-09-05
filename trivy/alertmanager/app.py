@@ -324,7 +324,7 @@ def trigger():
 
 #--------- AI Suggestion ----------#
 class PromptRequest(BaseModel):
-    build_id: int
+    jenkins_build_number: int
     ai_engine: str # "gemini", "openai"
     model: str  # "gemini-2.5-flash", "gpt-4.1-nano"
 

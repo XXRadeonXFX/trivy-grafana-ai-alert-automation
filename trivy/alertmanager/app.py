@@ -442,7 +442,7 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
 
             email_html = ""
             email_html += "<h2>📊 Vulnerability Fix - AI Recommendations </h2>"
-            email_html += "<h3>Project Details:<br> Project: "+project_name+" <br>Image Name - "+str(image_name)+" <br> Ref Build id - "+str(build_id)+" <br/> Jenkins Build Details: <a href='"+ci_url+"' >"+ci_url+"</a> </h3> <hr>"
+            email_html += "<h3>Project Details:<br> Project: "+project_name+" <br>Image Name - "+str(image_name)+" <br> Ref Build id - "+str(jenkins_build_number)+" <br/> Jenkins Build Details: <a href='"+ci_url+"' >"+ci_url+"</a> </h3> <hr>"
             email_html += "<h3>AI Recommendation</h3><div style='font-size:16px;line-height:21px;'><p>The below is the AI recommendations based on the following CVE issues reported on this build</p><p style='font-size:17px;line-height:23px;color:green;'>"+cve_name+"</p>"
             email_html += ai_text
             email_html += "</div>"

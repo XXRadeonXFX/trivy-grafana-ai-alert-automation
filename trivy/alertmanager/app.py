@@ -352,7 +352,7 @@ async def generate_text(request: PromptRequest,api_secret: str = Header(None)):
             select_query = """
             SELECT id, project, image, tag, ci_url
             FROM build_reports
-            WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s;
+            WHERE jenkins_build_number = %s;
             """
             cur.execute(select_query, (build_id,))
             row = cur.fetchone()
@@ -478,8 +478,9 @@ def check_vulnerability_count(build_id):
 
     # First verify the build exists
     build_check_query = """
-        SELECT CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) AS id 
-        FROM build_reports WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s
+        SELECT jenkins_build_number AS id 
+        FROM build_reports 
+		WHERE jenkins_build_number = %s
     """
     cur.execute(build_check_query, (build_id,))
     build_exists = cur.fetchone()
@@ -493,11 +494,11 @@ def check_vulnerability_count(build_id):
     # Count vulnerabilities for this build (excluding exceptions)
     query = """
         SELECT COUNT(DISTINCT A.vuln_id) AS vuln_count
-        FROM trivy_results AS A 
-	    JOIN build_reports AS B 
-		ON  A.build_id = B.id   
-		AND CAST(regexp_replace(B.tag, '[^0-9]', '', 'g') AS INT) = %s
-		AND A.is_exception = 0
+		FROM trivy_results AS A
+		JOIN build_reports AS B
+		  ON A.build_id = B.id
+		WHERE B.jenkins_build_number = %s
+		  AND A.is_exception = 0
     """
     
     cur.execute(query, (build_id,))
@@ -520,7 +521,9 @@ def get_vuln_ids(build_id):
 
     # First verify the build exists
     build_check_query = """
-        SELECT CAST(regexp_replace(B.tag, '[^0-9]', '', 'g') AS INT) AS id FROM build_reports WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s
+        SELECT jenkins_build_number AS id 
+		FROM build_reports 
+        WHERE jenkins_build_number  = %s
     """
     cur.execute(build_check_query, (build_id,))
     build_exists = cur.fetchone()
@@ -533,11 +536,11 @@ def get_vuln_ids(build_id):
 
     query = """
         SELECT A.vuln_id vuln_id
-        FROM trivy_results AS A 
-	    JOIN build_reports AS B 
-		ON  A.build_id = B.id   
-		AND CAST(regexp_replace(B.tag, '[^0-9]', '', 'g') AS INT) = %s
-		AND A.is_exception = 0
+		FROM trivy_results AS A
+		JOIN build_reports AS B
+		  ON A.build_id = B.id
+		WHERE B.jenkins_build_number = %s
+		  AND A.is_exception = 0
     """
     
     cur.execute(query, (build_id,))
@@ -571,7 +574,7 @@ def update_ai_recommendation(build_id, html_content):
             ai_recommendation = %s, 
             ai_recommendation_html = %s
 
-        WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s
+        WHERE jenkins_build_number = %s
     """
     cur.execute(update_query, (clean_text, html_content,build_id))
     conn.commit()

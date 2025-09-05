@@ -163,6 +163,7 @@ try:
                 project TEXT,
                 image TEXT,
                 tag TEXT,
+                jenkins_build_number INT,             -- new column for Jenkins build #
                 ci_url TEXT,
                 full_report JSONB,
                 timestamp TIMESTAMP,
@@ -170,11 +171,12 @@ try:
                 ai_recommendation_html TEXT DEFAULT NULL
             )
         """)
-
+        
         cur.execute("""
             CREATE TABLE IF NOT EXISTS trivy_results (
                 id SERIAL PRIMARY KEY,
-                build_id INT REFERENCES build_reports(id),
+                build_id INT REFERENCES build_reports(id) ON DELETE CASCADE,
+                jenkins_build_number INT,             -- store Jenkins build number
                 severity TEXT,
                 vuln_id TEXT,
                 pkg_name TEXT,
@@ -187,11 +189,12 @@ try:
                 is_exception INT DEFAULT 0
             )
         """)
-
+        
         cur.execute("""
             CREATE TABLE IF NOT EXISTS trivy_secrets (
                 id SERIAL PRIMARY KEY,
-                build_id INT REFERENCES build_reports(id),
+                build_id INT REFERENCES build_reports(id) ON DELETE CASCADE,
+                jenkins_build_number INT,             -- store Jenkins build number
                 target TEXT,
                 rule_id TEXT,
                 category TEXT,

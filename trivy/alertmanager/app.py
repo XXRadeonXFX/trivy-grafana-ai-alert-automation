@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from fastapi import FastAPI, Request, HTTPException, status, Header,UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import psycopg2
 import psycopg2.extras  # DictCursor, RealDictCursor, etc.
 

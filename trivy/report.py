@@ -226,10 +226,13 @@ try:
             print(f"Failed to serialize JSON data: {e}", file=sys.stderr)
             json_data = '{"error": "Failed to serialize scan data"}'
         
+        # Extract Jenkins build number from tag
+        jenkins_build_number = int(''.join([c for c in tag if c.isdigit()]))
+        
         cur.execute("""
-            INSERT INTO build_reports (project, image, tag, ci_url, full_report, timestamp)
-            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-        """, (project_name, image, tag, ci_url, json_data, datetime.utcnow()))
+            INSERT INTO build_reports (project, image, tag, ci_url, full_report, timestamp, jenkins_build_number)
+            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+        """, (project_name, image, tag, ci_url, json_data, datetime.utcnow(), jenkins_build_number))
         
         build_id = cur.fetchone()[0]
         debug_print(f"Build report inserted with ID: {build_id}")
@@ -288,9 +291,10 @@ try:
             for s in secrets:
                 try:
                     cur.execute("""
-                        INSERT INTO trivy_secrets (build_id, target, rule_id, category, severity, title,
-                                                start_line, end_line, match, code, layer, timestamp)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    INSERT INTO trivy_results (build_id, jenkins_build_number, severity, vuln_id, pkg_name, installed, fixed,
+                                               status, primary_url, vendor_severity, timestamp, is_exception)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+
                     """, (
                         build_id,
                         s.get("target"),

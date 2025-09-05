@@ -4,7 +4,7 @@ Call an AI Suggestion service endpoint that supports multiple AI providers
 (OpenAI or Gemini).
 
 Example:
-  python3 ai_suggestion.py 26 https://alerts.thakurprince.com yourapisecret \
+  python3 ai_suggestion.py 52 https://alerts.thakurprince.com yourapisecret \
       --engine gemini --model gemini-2.0-flash --timeout 60 --retries 3 --log-level INFO
 """
 
@@ -35,7 +35,7 @@ STATUS_RETRY: tuple[int, ...] = (429, 500, 502, 503, 504)
 
 @dataclass(frozen=True)
 class Config:
-    build_id: int
+    build_number: int
     base_url: str
     api_secret: str
     engine: str
@@ -46,6 +46,7 @@ class Config:
     verify_tls: bool
     log_level: str
     json_only: bool
+    send_as_string: bool
 
 
 def _mask_secret(s: str) -> str:
@@ -70,7 +71,14 @@ def resolve_model(engine: str, model: Optional[str]) -> str:
     return model or DEFAULT_MODELS[engine_l]
 
 
-def build_payload(build_id: int, engine: str, model: str) -> Dict[str, Any]:
+def build_payload(build_number: int, engine: str, model: str, send_as_string: bool = False) -> Dict[str, Any]:
+    if send_as_string:
+        # Send as "build-52" string format to match database tag column
+        build_id = f"build-{build_number}"
+    else:
+        # Send as integer - server should handle the tag formatting
+        build_id = build_number
+
     return {
         "build_id": build_id,
         "ai_engine": engine.lower(),
@@ -152,7 +160,7 @@ def call_api(
 
 def parse_args() -> Config:
     p = argparse.ArgumentParser(description="Call /generate-ai-suggestion (OpenAI or Gemini).")
-    p.add_argument("build_id", help="Build ID to analyze (integer).")
+    p.add_argument("build_number", help="Build number to analyze (integer, will be formatted as needed).")
     p.add_argument("base_url", help="Service base URL, e.g. https://alerts.example.com")
     p.add_argument("api_secret", help="Value for 'api-secret' header")
 
@@ -178,21 +186,23 @@ def parse_args() -> Config:
                    help="Log verbosity (default: %(default)s)")
     p.add_argument("--json-only", action="store_true",
                    help="Print JSON only (no extra logs to stdout).")
+    p.add_argument("--send-as-string", action="store_true",
+                   help="Send build_id as 'build-{number}' string instead of integer.")
 
     args = p.parse_args()
 
     # Convert and validate types/values
     try:
-        build_id = int(str(args.build_id))
+        build_number = int(str(args.build_number))
     except ValueError:
-        raise SystemExit("build_id must be an integer.")
+        raise SystemExit("build_number must be an integer.")
 
     base_url = normalize_and_validate_url(args.base_url)
     engine = args.engine.lower()
     model = resolve_model(engine, args.model)
 
     return Config(
-        build_id=build_id,
+        build_number=build_number,
         base_url=base_url,
         api_secret=args.api_secret,
         engine=engine,
@@ -203,6 +213,7 @@ def parse_args() -> Config:
         verify_tls=not args.no_verify_tls,
         log_level=args.log_level,
         json_only=args.json_only,
+        send_as_string=args.send_as_string,
     )
 
 
@@ -226,7 +237,7 @@ def main() -> int:
             h.stream = sys.stderr
 
     session = create_session(cfg.retries, cfg.backoff)
-    payload = build_payload(cfg.build_id, cfg.engine, cfg.model)
+    payload = build_payload(cfg.build_number, cfg.engine, cfg.model, cfg.send_as_string)
 
     result = call_api(
         session=session,

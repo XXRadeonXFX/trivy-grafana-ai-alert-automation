@@ -463,7 +463,7 @@ pipeline {
                             }
                         }
                     }
-
+        }
         stage('AI Security Analysis') {
             // when {
             //     expression { env.BUILD_REF_ID?.trim() }

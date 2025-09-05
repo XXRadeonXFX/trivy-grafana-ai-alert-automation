@@ -467,164 +467,316 @@ pipeline {
         }
 
         stage('Security Scan') {
-            when {
-                expression { env.DOCKER_IMAGE_BUILT == 'true' }
-            }
-            steps {
-                script {
-                    try {
-                        sh '''
-                            echo "=== Container Image Security Scan ==="
-                            
-                            # Ensure required directories exist
-                            mkdir -p "${REPORTS_DIR}"
-                            mkdir -p "${WORKSPACE}/trivy-cache"
-                            
-                            # Ensure Trivy is available
-                            export PATH="${HOME}/bin:$PATH"
-                            
-                            # Set Trivy cache location to workspace
-                            export TRIVY_CACHE_DIR="${WORKSPACE}/trivy-cache"
-                            
-                            # Verify Trivy is working
-                            trivy --version
-                            
-                            # Verify the Docker image exists locally before scanning
-                            echo "Checking if Docker image exists locally..."
-                            if ! docker images "${ECR_REPO_PATH}:${IMAGE_TAG}" --format "table {{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_TAG}"; then
-                                echo "ERROR: Docker image ${ECR_REPO_PATH}:${IMAGE_TAG} not found locally"
-                                echo "Available images:"
-                                docker images "${ECR_REPO_PATH}" || echo "No images found"
-                                exit 1
-                            fi
-                            
-                            echo "✓ Docker image ${ECR_REPO_PATH}:${IMAGE_TAG} found locally"
-                            
-                            # Create scan output file
-                            touch "${REPORTS_DIR}/scan-output.log"
-                            
-                            # Run Trivy scan directly for better reliability
-                            echo "Starting Trivy security scan..."
-                            timeout 1800 trivy image \\
-                                --cache-dir "${WORKSPACE}/trivy-cache" \\
-                                --format json \\
-                                --output "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" \\
-                                --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \\
-                                --exit-code 0 \\
-                                "${ECR_REPO_PATH}:${IMAGE_TAG}" 2>&1 | tee "${REPORTS_DIR}/scan-output.log"
-                            
-                            SCAN_EXIT_CODE=${PIPESTATUS[0]}
-                            echo "Trivy scan exit code: $SCAN_EXIT_CODE"
-                            
-                            # Check if scan completed successfully
-                            if [ $SCAN_EXIT_CODE -ne 0 ] && [ $SCAN_EXIT_CODE -ne 1 ]; then
-                                echo "WARNING: Trivy scan completed with exit code $SCAN_EXIT_CODE"
-                            fi
-                            
-                            # Verify scan report was generated
-                            if [ -f "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" ]; then
-                                echo "✓ Scan report generated successfully"
-                                echo "Report size: $(du -h "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json")"
-                                
-                                # Add build_id to scan output for AI analysis
-                                echo "build_id: ${BUILD_NUMBER}" >> "${REPORTS_DIR}/scan-output.log"
-                                
-                                # Quick summary of findings
-                                echo "=== Quick Scan Summary ==="
-                                if command -v jq >/dev/null 2>&1; then
-                                    jq -r '.Results[]?.Vulnerabilities // [] | group_by(.Severity) | map({severity: .[0].Severity, count: length}) | .[]' \\
-                                        "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" 2>/dev/null || echo "Could not parse JSON summary"
-                                else
-                                    echo "jq not available for JSON parsing"
-                                fi
-                            else
-                                echo "WARNING: Scan report not found"
-                                echo "Contents of reports directory:"
-                                ls -la "${REPORTS_DIR}/" || echo "Reports directory not found"
-                            fi
-                            
-                            exit 0
-                        '''
-                        
-                        // Process scan results
+                    when {
+                        expression { env.DOCKER_IMAGE_BUILT == 'true' }
+                    }
+                    steps {
                         script {
                             try {
-                                if (fileExists("${REPORTS_DIR}/scan-output.log")) {
-                                    def scanOutput = readFile("${REPORTS_DIR}/scan-output.log")
+                                sh '''
+                                    echo "=== Container Image Security Scan ==="
                                     
-                                    if (scanOutput.trim()) {
-                                        env.SCAN_OUTPUT = scanOutput
+                                    # Ensure required directories exist
+                                    mkdir -p "${REPORTS_DIR}"
+                                    mkdir -p "${WORKSPACE}/trivy-cache"
+                                    
+                                    # Ensure Trivy is available
+                                    export PATH="${HOME}/bin:$PATH"
+                                    
+                                    # Set Trivy cache location to workspace
+                                    export TRIVY_CACHE_DIR="${WORKSPACE}/trivy-cache"
+                                    
+                                    # Verify Trivy is working
+                                    trivy --version
+                                    
+                                    # Verify the Docker image exists locally before scanning
+                                    echo "Checking if Docker image exists locally..."
+                                    if ! docker images "${ECR_REPO_PATH}:${IMAGE_TAG}" --format "table {{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_TAG}"; then
+                                        echo "ERROR: Docker image ${ECR_REPO_PATH}:${IMAGE_TAG} not found locally"
+                                        echo "Available images:"
+                                        docker images "${ECR_REPO_PATH}" || echo "No images found"
+                                        exit 1
+                                    fi
+                                    
+                                    echo "✓ Docker image ${ECR_REPO_PATH}:${IMAGE_TAG} found locally"
+                                    
+                                    # Create scan output file
+                                    touch "${REPORTS_DIR}/scan-output.log"
+                                    
+                                    # Run Trivy scan with proper error handling
+                                    echo "Starting Trivy security scan..."
+                                    
+                                    # Use a more robust approach for capturing output and exit code
+                                    set +e  # Temporarily disable exit on error
+                                    
+                                    timeout 1800 trivy image \\
+                                        --cache-dir "${WORKSPACE}/trivy-cache" \\
+                                        --format json \\
+                                        --output "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" \\
+                                        --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \\
+                                        --exit-code 0 \\
+                                        "${ECR_REPO_PATH}:${IMAGE_TAG}" > "${REPORTS_DIR}/scan-output.log" 2>&1
+                                    
+                                    SCAN_EXIT_CODE=$?
+                                    set -e  # Re-enable exit on error
+                                    
+                                    echo "Trivy scan exit code: $SCAN_EXIT_CODE"
+                                    
+                                    # Display scan output for debugging
+                                    echo "=== Scan Output Preview ==="
+                                    head -20 "${REPORTS_DIR}/scan-output.log" || echo "Could not read scan output"
+                                    
+                                    # Check if scan completed successfully
+                                    if [ $SCAN_EXIT_CODE -ne 0 ] && [ $SCAN_EXIT_CODE -ne 1 ]; then
+                                        echo "WARNING: Trivy scan completed with exit code $SCAN_EXIT_CODE"
+                                        if [ $SCAN_EXIT_CODE -eq 124 ]; then
+                                            echo "ERROR: Scan timed out after 30 minutes"
+                                            exit 1
+                                        fi
+                                    fi
+                                    
+                                    # Verify scan report was generated
+                                    if [ -f "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" ]; then
+                                        echo "✓ Scan report generated successfully"
+                                        REPORT_SIZE=$(du -h "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" | cut -f1)
+                                        echo "Report size: $REPORT_SIZE"
                                         
-                                        // Extract build ID from scan output
-                                        def buildIdMatcher = (scanOutput =~ /build_id:\s*([0-9]+)/)
-                                        if (buildIdMatcher) {
-                                            env.BUILD_REF_ID = buildIdMatcher[0][1]
-                                            echo "Security scan completed. Build Reference ID: ${env.BUILD_REF_ID}"
+                                        # Add build_id to scan output for AI analysis
+                                        echo "" >> "${REPORTS_DIR}/scan-output.log"
+                                        echo "build_id: ${BUILD_NUMBER}" >> "${REPORTS_DIR}/scan-output.log"
+                                        echo "scan_timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${REPORTS_DIR}/scan-output.log"
+                                        
+                                        # Quick summary of findings using basic shell tools
+                                        echo "=== Quick Scan Summary ==="
+                                        if command -v jq >/dev/null 2>&1; then
+                                            echo "Attempting to parse vulnerability summary..."
+                                            # Safer jq command with proper error handling
+                                            jq -r '
+                                                if .Results then 
+                                                    [.Results[]?.Vulnerabilities // []] | flatten | 
+                                                    group_by(.Severity) | 
+                                                    map("\\(.key // "Unknown"): \\(length)") | 
+                                                    join(", ")
+                                                else 
+                                                    "No vulnerabilities section found"
+                                                end
+                                            ' "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" 2>/dev/null || echo "Could not parse JSON with jq"
+                                            
+                                            # Alternative simple count
+                                            echo "Total vulnerabilities found:"
+                                            jq '[.Results[]?.Vulnerabilities // []] | flatten | length' "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" 2>/dev/null || echo "Count unavailable"
+                                        else
+                                            echo "jq not available for JSON parsing"
+                                            # Basic grep-based summary
+                                            echo "Using basic text analysis:"
+                                            grep -o '"Severity":"[^"]*"' "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" 2>/dev/null | \\
+                                                sort | uniq -c | head -10 || echo "Could not analyze with grep"
+                                        fi
+                                    else
+                                        echo "WARNING: Scan report not found"
+                                        echo "Contents of reports directory:"
+                                        ls -la "${REPORTS_DIR}/" || echo "Reports directory not found"
+                                        echo "Checking for any JSON files:"
+                                        find "${REPORTS_DIR}" -name "*.json" -type f 2>/dev/null || echo "No JSON files found"
+                                    fi
+                                    
+                                    # Always exit successfully to allow pipeline continuation
+                                    exit 0
+                                '''
+                                
+                                // Process scan results with better error handling
+                                script {
+                                    try {
+                                        echo "Processing scan results..."
+                                        
+                                        if (fileExists("${REPORTS_DIR}/scan-output.log")) {
+                                            def scanOutput = readFile("${REPORTS_DIR}/scan-output.log")
+                                            
+                                            if (scanOutput && scanOutput.trim()) {
+                                                env.SCAN_OUTPUT = scanOutput
+                                                echo "Scan output captured (${scanOutput.length()} characters)"
+                                                
+                                                // Extract build ID from scan output with better regex
+                                                def buildIdMatcher = (scanOutput =~ /build_id:\s*([0-9]+)/)
+                                                if (buildIdMatcher) {
+                                                    env.BUILD_REF_ID = buildIdMatcher[0][1]
+                                                    echo "Security scan completed. Build Reference ID: ${env.BUILD_REF_ID}"
+                                                } else {
+                                                    env.BUILD_REF_ID = BUILD_NUMBER
+                                                    echo "No build_id found in output, using BUILD_NUMBER: ${env.BUILD_REF_ID}"
+                                                }
+                                                
+                                                // Check for critical errors but be more specific
+                                                if (scanOutput.contains("FATAL") && scanOutput.contains("error")) {
+                                                    if (!scanOutput.contains("successfully")) {
+                                                        echo "WARNING: Fatal error detected in scan, but continuing pipeline"
+                                                        currentBuild.result = 'UNSTABLE'
+                                                    }
+                                                }
+                                                
+                                                // Check if timeout occurred
+                                                if (scanOutput.contains("timed out") || scanOutput.contains("timeout")) {
+                                                    echo "WARNING: Scan timeout detected"
+                                                    currentBuild.result = 'UNSTABLE'
+                                                }
+                                                
+                                            } else {
+                                                throw new Exception("Scan output file is empty")
+                                            }
                                         } else {
-                                            env.BUILD_REF_ID = BUILD_NUMBER
-                                            echo "Using BUILD_NUMBER as BUILD_REF_ID: ${env.BUILD_REF_ID}"
+                                            throw new Exception("Scan output file not found")
                                         }
                                         
-                                        // Check for critical errors
-                                        if (scanOutput.contains("FATAL") && !scanOutput.contains("successfully")) {
-                                            throw new Exception("Fatal error detected in scan output")
+                                        // Verify scan report exists and has content
+                                        if (fileExists("${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json")) {
+                                            def reportFile = new File("${WORKSPACE}/${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json")
+                                            if (reportFile.exists() && reportFile.length() > 100) {
+                                                echo "✓ Scan report verified: ${reportFile.length()} bytes"
+                                            } else {
+                                                echo "WARNING: Scan report file is too small or empty"
+                                                currentBuild.result = 'UNSTABLE'
+                                            }
+                                        } else {
+                                            echo "WARNING: Scan report JSON file not found"
+                                            currentBuild.result = 'UNSTABLE'
                                         }
-                                    } else {
-                                        throw new Exception("Scan output file is empty")
+                                        
+                                    } catch (Exception e) {
+                                        echo "Error processing scan output: ${e.getMessage()}"
+                                        env.SCAN_OUTPUT = "Scan output processing failed: ${e.getMessage()}"
+                                        env.BUILD_REF_ID = BUILD_NUMBER
+                                        currentBuild.result = 'UNSTABLE'
+                                        
+                                        // Try to provide some diagnostic information
+                                        try {
+                                            sh '''
+                                                echo "=== Diagnostic Information ==="
+                                                echo "Reports directory contents:"
+                                                ls -la "${REPORTS_DIR}/" || echo "No reports directory"
+                                                echo "Workspace contents:"
+                                                ls -la "${WORKSPACE}/" | head -20
+                                                echo "Available disk space:"
+                                                df -h
+                                            '''
+                                        } catch (Exception diagEx) {
+                                            echo "Could not gather diagnostic info: ${diagEx.getMessage()}"
+                                        }
                                     }
-                                } else {
-                                    throw new Exception("Scan output file not found")
                                 }
                                 
                             } catch (Exception e) {
-                                echo "Error processing scan output: ${e.getMessage()}"
-                                env.SCAN_OUTPUT = "Scan output processing failed: ${e.getMessage()}"
-                                env.BUILD_REF_ID = BUILD_NUMBER
-                                currentBuild.result = 'UNSTABLE'
+                                def errorMessage = e.getMessage()
+                                echo "Security scan stage failed: ${errorMessage}"
+                                
+                                if (errorMessage.contains("no space left on device") || errorMessage.contains("disk")) {
+                                    currentBuild.result = 'FAILURE'
+                                    error("Security scan failed due to insufficient disk space.")
+                                } else if (errorMessage.contains("timeout") || errorMessage.contains("124")) {
+                                    currentBuild.result = 'UNSTABLE'
+                                    echo "Security scan timed out after 30 minutes."
+                                    env.SCAN_OUTPUT = "Security scan timed out"
+                                    env.BUILD_REF_ID = BUILD_NUMBER
+                                } else if (errorMessage.contains("Docker image") && errorMessage.contains("not found")) {
+                                    currentBuild.result = 'FAILURE'
+                                    error("Security scan failed: Docker image not available for scanning.")
+                                } else {
+                                    currentBuild.result = 'UNSTABLE'
+                                    echo "Security scan encountered issues but pipeline will continue: ${errorMessage}"
+                                    env.SCAN_OUTPUT = "Security scan failed: ${errorMessage}"
+                                    env.BUILD_REF_ID = BUILD_NUMBER
+                                }
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            script {
+                                echo "=== Security Scan Post Actions ==="
+                                
+                                // Archive scan outputs with better error handling
+                                try {
+                                    def artifactPattern = "reports/scan-*.json, reports/scan-output.log, reports/scan-report-*.json"
+                                    archiveArtifacts artifacts: artifactPattern, 
+                                                   allowEmptyArchive: true,
+                                                   fingerprint: true,
+                                                   caseSensitive: false
+                                    echo "✓ Scan artifacts archived successfully"
+                                } catch (Exception e) {
+                                    echo "Could not archive scan artifacts: ${e.getMessage()}"
+                                    // Try to archive just the basic files
+                                    try {
+                                        archiveArtifacts artifacts: 'reports/**/*', 
+                                                       allowEmptyArchive: true,
+                                                       fingerprint: false
+                                        echo "✓ Basic reports archived as fallback"
+                                    } catch (Exception e2) {
+                                        echo "Complete archiving failure: ${e2.getMessage()}"
+                                    }
+                                }
+                                
+                                // Publish HTML report if available
+                                try {
+                                    if (fileExists("reports/scan-report-${IMAGE_TAG}.json")) {
+                                        publishHTML([
+                                            allowMissing: false,
+                                            alwaysLinkToLastBuild: true,
+                                            keepAll: true,
+                                            reportDir: 'reports',
+                                            reportFiles: "scan-report-${IMAGE_TAG}.json",
+                                            reportName: 'Trivy Security Scan Report',
+                                            reportTitles: 'Security Vulnerabilities'
+                                        ])
+                                        echo "✓ Security report published to Jenkins"
+                                    }
+                                } catch (Exception e) {
+                                    echo "Could not publish HTML report: ${e.getMessage()}"
+                                }
+                                
+                                // Cleanup with better error handling
+                                try {
+                                    sh '''
+                                        echo "=== Post-Scan Cleanup ==="
+                                        
+                                        # Clean up trivy cache
+                                        if [ -d "${WORKSPACE}/trivy-cache" ]; then
+                                            rm -rf "${WORKSPACE}/trivy-cache" || echo "Could not remove trivy cache"
+                                            echo "✓ Trivy cache cleaned"
+                                        fi
+                                        
+                                        # Clean up docker temp files
+                                        sudo rm -rf /var/lib/docker/tmp/docker-export-* 2>/dev/null || true
+                                        
+                                        # Show final disk usage
+                                        echo "Final disk usage:"
+                                        df -h | head -5
+                                        
+                                        # Ensure scan artifacts are preserved
+                                        if [ -f "${REPORTS_DIR}/scan-output.log" ]; then
+                                            SCAN_LOG_SIZE=$(du -h "${REPORTS_DIR}/scan-output.log" | cut -f1)
+                                            echo "✓ Scan output preserved: $SCAN_LOG_SIZE"
+                                        fi
+                                        
+                                        echo "Security scan cleanup completed"
+                                    '''
+                                } catch (Exception e) {
+                                    echo "Cleanup encountered issues: ${e.getMessage()}"
+                                }
                             }
                         }
                         
-                    } catch (Exception e) {
-                        def errorMessage = e.getMessage()
+                        success {
+                            echo "✓ Security scan stage completed successfully"
+                        }
                         
-                        if (errorMessage.contains("no space left on device")) {
-                            currentBuild.result = 'FAILURE'
-                            error("Security scan failed due to insufficient disk space.")
-                        } else if (errorMessage.contains("timeout")) {
-                            currentBuild.result = 'UNSTABLE'
-                            echo "Security scan timed out."
-                            env.SCAN_OUTPUT = "Security scan timed out"
-                            env.BUILD_REF_ID = BUILD_NUMBER
-                        } else {
-                            currentBuild.result = 'UNSTABLE'
-                            echo "Security scan encountered issues: ${errorMessage}"
-                            env.SCAN_OUTPUT = "Security scan failed: ${errorMessage}"
-                            env.BUILD_REF_ID = BUILD_NUMBER
+                        unstable {
+                            echo "⚠ Security scan completed with warnings - check scan output for details"
+                        }
+                        
+                        failure {
+                            echo "❌ Security scan stage failed - check logs for troubleshooting steps"
                         }
                     }
                 }
-            }
-            post {
-                always {
-                    script {
-                        // Archive scan outputs
-                        try {
-                            archiveArtifacts artifacts: 'reports/scan-*.*, reports/scan-output.log', 
-                                           allowEmptyArchive: true,
-                                           fingerprint: true
-                        } catch (Exception e) {
-                            echo "Could not archive scan artifacts: ${e.getMessage()}"
-                        }
-                        
-                        // Cleanup
-                        sh '''
-                            rm -rf "${WORKSPACE}/trivy-cache" || true
-                            sudo rm -rf /var/lib/docker/tmp/docker-export-* 2>/dev/null || true
-                        '''
-                    }
-                }
-            }
-        }
 
         stage('AI Security Analysis') {
             when {

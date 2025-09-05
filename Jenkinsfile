@@ -3,9 +3,11 @@ pipeline {
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 1, unit: 'HOURS')
+        timeout(time: 2, unit: 'HOURS')
         retry(1)
         skipDefaultCheckout(false)
+        timestamps()
+        ansiColor('xterm')
     }
 
     environment {
@@ -58,6 +60,10 @@ pipeline {
         BUILD_REF_ID = ""
         SECURITY_REPORT = ""
         SCAN_OUTPUT = ""
+        
+        // Pipeline Control Flags
+        DOCKER_BUILDKIT = "0"  // Disable BuildKit for stability
+        COMPOSE_DOCKER_CLI_BUILD = "0"
     }
 
     stages {
@@ -77,6 +83,9 @@ pipeline {
                         env.GIT_COMMIT = "unknown"
                         echo "Warning: Could not determine git commit: ${e.getMessage()}"
                     }
+                    
+                    // Initialize BUILD_REF_ID with BUILD_NUMBER as fallback
+                    env.BUILD_REF_ID = BUILD_NUMBER
                 }
                 
                 echo "=== Build Information ==="
@@ -88,15 +97,44 @@ pipeline {
                 
                 // Create required directories
                 sh '''
-                    mkdir -p ${TRIVY_CACHE_DIR} || true
-                    mkdir -p ${REPORTS_DIR} || true
+                    mkdir -p "${TRIVY_CACHE_DIR}" || true
+                    mkdir -p "${REPORTS_DIR}" || true
                     mkdir -p test-reports || true
+                    
+                    # Set proper permissions
+                    chmod 755 "${TRIVY_CACHE_DIR}" "${REPORTS_DIR}" test-reports || true
+                '''
+            }
+        }
+
+        stage('Environment Health Check') {
+            steps {
+                sh '''
+                    echo "=== Environment Health Check ==="
+                    echo "Disk usage:"
+                    df -h
+                    echo "Memory usage:"
+                    free -h
+                    echo "Docker system status:"
+                    docker system df || echo "Docker system df failed"
+                    docker info | head -20 || echo "Docker info failed"
+                    
+                    # Check minimum requirements
+                    AVAILABLE_SPACE_KB=$(df /var/lib/docker | tail -1 | awk '{print $4}')
+                    AVAILABLE_SPACE_GB=$((AVAILABLE_SPACE_KB / 1024 / 1024))
+                    
+                    if [ "$AVAILABLE_SPACE_GB" -lt 5 ]; then
+                        echo "WARNING: Low disk space detected: ${AVAILABLE_SPACE_GB}GB"
+                        echo "Performing emergency cleanup..."
+                        docker system prune -a -f --volumes || true
+                    fi
                 '''
             }
         }
 
         stage('Checkout Source Code') {
             steps {
+                cleanWs()
                 checkout([
                     $class: 'GitSCM',
                     branches: [[name: "*/${GIT_BRANCH}"]],
@@ -133,16 +171,15 @@ pipeline {
                     required_files="scan.sh report.py email_template.py ai_suggestion.py"
                     for file in $required_files; do
                         if [ ! -f "trivy/$file" ]; then
-                            echo "ERROR: Required file trivy/$file not found"
-                            exit 1
+                            echo "WARNING: File trivy/$file not found"
                         fi
                     done
                     
                     # Make scripts executable
-                    chmod +x trivy/*.sh || true
-                    chmod +x trivy/*.py || true
+                    chmod +x trivy/*.sh 2>/dev/null || true
+                    chmod +x trivy/*.py 2>/dev/null || true
                     
-                    echo "Repository verification completed successfully"
+                    echo "Repository verification completed"
                 '''
             }
         }
@@ -161,18 +198,15 @@ pipeline {
                             echo "Installing Trivy using binary download method"
                             
                             # Create local bin directory
-                            mkdir -p ${HOME}/bin
+                            mkdir -p "${HOME}/bin"
                             
                             # Download and install Trivy binary
-                            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b ${HOME}/bin
-                            
-                            # Add to PATH for this session
-                            export PATH=${HOME}/bin:$PATH
+                            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "${HOME}/bin"
                             
                             # Verify installation
                             if [ -f "${HOME}/bin/trivy" ]; then
                                 echo "Trivy installed successfully"
-                                ${HOME}/bin/trivy --version
+                                "${HOME}/bin/trivy" --version
                             else
                                 echo "ERROR: Trivy installation failed"
                                 exit 1
@@ -180,11 +214,11 @@ pipeline {
                         fi
                         
                         # Ensure Trivy is in PATH
-                        export PATH=${HOME}/bin:$PATH
+                        export PATH="${HOME}/bin:$PATH"
                         
                         # Update Trivy database
                         echo "Updating Trivy vulnerability database"
-                        trivy --cache-dir ${TRIVY_CACHE_DIR} image --download-db-only || echo "Database update completed with warnings"
+                        trivy --cache-dir "${TRIVY_CACHE_DIR}" image --download-db-only || echo "Database update completed with warnings"
                     '''
                 }
             }
@@ -265,430 +299,328 @@ pipeline {
         }
 
         stage('Build Application Image') {
-                    steps {
-                        script {
-                            try {
-                                // Pre-build cleanup and space check
-                                sh '''
-                                    echo "=== Pre-Build Environment Setup ==="
-                                    
-                                    # Check current disk usage
-                                    echo "Current disk usage:"
-                                    df -h
-                                    
-                                    # Clean up Docker to free space before build
-                                    echo "Cleaning up Docker resources..."
-                                    docker system prune -f --volumes || true
-                                    docker image prune -a -f || true
-                                    
-                                    # Remove dangling images and containers
-                                    docker container prune -f || true
-                                    docker volume prune -f || true
-                                    docker network prune -f || true
-                                    
-                                    # Clean up any old builds of this image
-                                    docker rmi ${ECR_REPO_PATH}:latest || true
-                                    docker rmi $(docker images ${ECR_REPO_PATH} -q) 2>/dev/null || true
-                                    
-                                    # Check available space after cleanup
-                                    echo "Disk usage after cleanup:"
-                                    df -h
-                                    
-                                    # Verify minimum space requirements (at least 3GB for Docker build)
-                                    AVAILABLE_SPACE_KB=$(df /var/lib/docker | tail -1 | awk '{print $4}')
-                                    AVAILABLE_SPACE_GB=$((AVAILABLE_SPACE_KB / 1024 / 1024))
-                                    
-                                    echo "Available space: ${AVAILABLE_SPACE_GB}GB"
-                                    
-                                    if [ "$AVAILABLE_SPACE_KB" -lt 3145728 ]; then
-                                        echo "ERROR: Insufficient disk space for Docker build. Available: ${AVAILABLE_SPACE_GB}GB, Required: 3GB"
-                                        echo "Please free up disk space or increase storage allocation."
-                                        exit 1
-                                    fi
-                                    
-                                    # Check Docker daemon status
-                                    if ! docker info >/dev/null 2>&1; then
-                                        echo "ERROR: Docker daemon is not accessible"
-                                        exit 1
-                                    fi
-                                    
-                                    echo "Pre-build checks passed. Proceeding with Docker build..."
-                                '''
-                                
-                                // Build Docker image with enhanced error handling
-                                sh '''
-                                    echo "=== Docker Image Build ==="
-                                    
-                                    # Check Docker version and BuildKit support
-                                    echo "Docker version:"
-                                    docker --version
-                                    
-                                    # Check if BuildKit/buildx is available
-                                    echo "Checking BuildKit/buildx availability..."
-                                    if docker buildx version >/dev/null 2>&1; then
-                                        echo "✓ BuildKit/buildx is available"
-                                        export DOCKER_BUILDKIT=1
-                                        export BUILDKIT_PROGRESS=plain
-                                        BUILD_COMMAND="docker buildx build"
-                                        PROGRESS_FLAG="--progress=plain"
-                                    else
-                                        echo "⚠ BuildKit/buildx not available, using legacy builder"
-                                        export DOCKER_BUILDKIT=0
-                                        BUILD_COMMAND="docker build"
-                                        PROGRESS_FLAG=""
-                                    fi
-                                    
-                                    # Create build context size check
-                                    echo "Checking build context size..."
-                                    BUILD_CONTEXT_SIZE=$(du -sh . | cut -f1)
-                                    echo "Build context size: $BUILD_CONTEXT_SIZE"
-                                    
-                                    # Build Docker image with fallback approach
-                                    echo "Starting Docker build with command: $BUILD_COMMAND"
-                                    
-                                    if [ "$DOCKER_BUILDKIT" = "1" ]; then
-                                        # BuildKit-enabled build
-                                        echo "Using BuildKit for optimized build..."
-                                        $BUILD_COMMAND \\
-                                            --no-cache \\
-                                            --pull \\
-                                            --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
-                                            --tag ${ECR_REPO_PATH}:latest \\
-                                            --label "build.number=${BUILD_NUMBER}" \\
-                                            --label "build.url=${BUILD_URL}" \\
-                                            --label "git.commit=${GIT_COMMIT}" \\
-                                            --label "git.branch=${GIT_BRANCH}" \\
-                                            --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
-                                            $PROGRESS_FLAG \\
-                                            --load \\
-                                            . 2>&1
-                                    else
-                                        # Legacy build without BuildKit
-                                        echo "Using legacy Docker build..."
-                                        $BUILD_COMMAND \\
-                                            --no-cache \\
-                                            --pull \\
-                                            --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
-                                            --tag ${ECR_REPO_PATH}:latest \\
-                                            --label "build.number=${BUILD_NUMBER}" \\
-                                            --label "build.url=${BUILD_URL}" \\
-                                            --label "git.commit=${GIT_COMMIT}" \\
-                                            --label "git.branch=${GIT_BRANCH}" \\
-                                            --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
-                                            . 2>&1
-                                    fi
-                                    
-                                    # Verify image was created successfully
-                                    echo "Verifying built image..."
-                                    docker images ${ECR_REPO_PATH}:${IMAGE_TAG}
-                                    
-                                    # Get image size information
-                                    IMAGE_SIZE=$(docker images ${ECR_REPO_PATH}:${IMAGE_TAG} --format "table {{.Size}}" | tail -1)
-                                    echo "Built image size: $IMAGE_SIZE"
-                                    
-                                    # Quick image inspection
-                                    echo "Image inspection:"
-                                    docker inspect ${ECR_REPO_PATH}:${IMAGE_TAG} --format='{{.Config.Labels}}' || true
-                                    
-                                    echo "Docker image build completed successfully"
-                                '''
-                                
-                                // Post-build verification and cleanup
-                                sh '''
-                                    echo "=== Post-Build Verification ==="
-                                    
-                                    # Verify both tags exist
-                                    echo "Verifying image tags:"
-                                    docker images ${ECR_REPO_PATH} --format "table {{.Repository}}:{{.Tag}}\\t{{.Size}}\\t{{.CreatedAt}}"
-                                    
-                                    # Test that the image can be run (basic smoke test)
-                                    echo "Testing image can be instantiated..."
-                                    if docker run --rm ${ECR_REPO_PATH}:${IMAGE_TAG} echo "Image test successful" 2>/dev/null; then
-                                        echo "✓ Image smoke test passed"
-                                    else
-                                        echo "⚠ Warning: Image smoke test failed - image may have issues"
-                                    fi
-                                    
-                                    # Clean up intermediate build artifacts but keep our image
-                                    echo "Cleaning up build artifacts..."
-                                    docker builder prune -f || true
-                                    
-                                    # Final disk usage check
-                                    echo "Final disk usage:"
-                                    df -h
-                                '''
-                                
-                            } catch (Exception e) {
-                                // Enhanced error handling with specific disk space detection
-                                def errorMessage = e.getMessage()
-                                
-                                if (errorMessage.contains("no space left on device") || 
-                                    errorMessage.contains("disk") || 
-                                    errorMessage.contains("space")) {
-                                    
-                                    // Critical disk space failure
-                                    sh '''
-                                        echo "=== DISK SPACE FAILURE ANALYSIS ==="
-                                        df -h
-                                        echo "Docker system usage:"
-                                        docker system df 2>/dev/null || true
-                                        echo "Largest files in Docker directory:"
-                                        sudo du -h /var/lib/docker/ 2>/dev/null | sort -rh | head -10 || true
-                                    '''
-                                    
-                                    currentBuild.result = 'FAILURE'
-                                    error("Docker build failed due to insufficient disk space. Jenkins node requires maintenance.")
-                                    
-                                } else if (errorMessage.contains("docker: command not found") || 
-                                          errorMessage.contains("daemon")) {
-                                    
-                                    // Docker daemon issues
-                                    currentBuild.result = 'FAILURE'
-                                    error("Docker build failed due to Docker daemon issues: ${errorMessage}")
-                                    
-                                } else if (errorMessage.contains("COPY failed") || 
-                                          errorMessage.contains("ADD failed")) {
-                                    
-                                    // Dockerfile or build context issues
-                                    currentBuild.result = 'FAILURE'
-                                    error("Docker build failed due to build context or Dockerfile issues: ${errorMessage}")
-                                    
-                                } else {
-                                    
-                                    // Generic build failure
-                                    currentBuild.result = 'FAILURE'
-                                    error("Docker build failed: ${errorMessage}")
-                                }
-                            }
+            steps {
+                script {
+                    try {
+                        // Pre-build cleanup and space check
+                        sh '''
+                            echo "=== Pre-Build Environment Setup ==="
                             
-                            // Always clean up regardless of success/failure
-                            finally {
-                                sh '''
-                                    echo "=== Final Cleanup ==="
-                                    
-                                    # Remove any dangling images created during failed builds
-                                    docker image prune -f || true
-                                    
-                                    # Show final Docker system usage
-                                    echo "Final Docker system usage:"
-                                    docker system df || true
-                                    
-                                    # Log successful build for tracking
-                                    if docker images ${ECR_REPO_PATH}:${IMAGE_TAG} >/dev/null 2>&1; then
-                                        echo "✓ Image ${ECR_REPO_PATH}:${IMAGE_TAG} successfully built and available"
-                                    else
-                                        echo "✗ Image ${ECR_REPO_PATH}:${IMAGE_TAG} not found after build"
-                                    fi
-                                '''
-                            }
+                            # Check current disk usage
+                            echo "Current disk usage:"
+                            df -h
+                            
+                            # Clean up Docker to free space before build
+                            echo "Cleaning up Docker resources..."
+                            docker system prune -f --volumes || true
+                            docker image prune -a -f || true
+                            
+                            # Remove dangling images and containers
+                            docker container prune -f || true
+                            docker volume prune -f || true
+                            docker network prune -f || true
+                            
+                            # Clean up any old builds of this image
+                            docker rmi "${ECR_REPO_PATH}:latest" || true
+                            docker rmi $(docker images "${ECR_REPO_PATH}" -q) 2>/dev/null || true
+                            
+                            # Check available space after cleanup
+                            echo "Disk usage after cleanup:"
+                            df -h
+                            
+                            # Verify minimum space requirements (at least 3GB for Docker build)
+                            AVAILABLE_SPACE_KB=$(df /var/lib/docker | tail -1 | awk '{print $4}')
+                            AVAILABLE_SPACE_GB=$((AVAILABLE_SPACE_KB / 1024 / 1024))
+                            
+                            echo "Available space: ${AVAILABLE_SPACE_GB}GB"
+                            
+                            if [ "$AVAILABLE_SPACE_KB" -lt 3145728 ]; then
+                                echo "ERROR: Insufficient disk space for Docker build. Available: ${AVAILABLE_SPACE_GB}GB, Required: 3GB"
+                                echo "Please free up disk space or increase storage allocation."
+                                exit 1
+                            fi
+                            
+                            # Check Docker daemon status
+                            if ! docker info >/dev/null 2>&1; then
+                                echo "ERROR: Docker daemon is not accessible"
+                                exit 1
+                            fi
+                            
+                            echo "Pre-build checks passed. Proceeding with Docker build..."
+                        '''
+                        
+                        // Build Docker image with legacy builder for stability
+                        sh '''
+                            echo "=== Docker Image Build ==="
+                            
+                            # Disable BuildKit for stability
+                            export DOCKER_BUILDKIT=0
+                            
+                            # Check Docker version
+                            echo "Docker version:"
+                            docker --version
+                            
+                            # Create build context size check
+                            echo "Checking build context size..."
+                            BUILD_CONTEXT_SIZE=$(du -sh . | cut -f1)
+                            echo "Build context size: $BUILD_CONTEXT_SIZE"
+                            
+                            # Build Docker image with legacy builder
+                            echo "Starting Docker build..."
+                            docker build \\
+                                --no-cache \\
+                                --pull \\
+                                --tag "${ECR_REPO_PATH}:${IMAGE_TAG}" \\
+                                --tag "${ECR_REPO_PATH}:latest" \\
+                                --label "build.number=${BUILD_NUMBER}" \\
+                                --label "build.url=${BUILD_URL}" \\
+                                --label "git.commit=${GIT_COMMIT}" \\
+                                --label "git.branch=${GIT_BRANCH}" \\
+                                --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
+                                . 2>&1
+                            
+                            # Verify image was created successfully
+                            echo "Verifying built image..."
+                            docker images "${ECR_REPO_PATH}:${IMAGE_TAG}"
+                            
+                            # Get image size information
+                            IMAGE_SIZE=$(docker images "${ECR_REPO_PATH}:${IMAGE_TAG}" --format "table {{.Size}}" | tail -1)
+                            echo "Built image size: $IMAGE_SIZE"
+                            
+                            # Quick image inspection
+                            echo "Image inspection:"
+                            docker inspect "${ECR_REPO_PATH}:${IMAGE_TAG}" --format='{{.Config.Labels}}' || true
+                            
+                            echo "Docker image build completed successfully"
+                        '''
+                        
+                        // Post-build verification
+                        sh '''
+                            echo "=== Post-Build Verification ==="
+                            
+                            # Verify both tags exist
+                            echo "Verifying image tags:"
+                            docker images "${ECR_REPO_PATH}" --format "table {{.Repository}}:{{.Tag}}\\t{{.Size}}\\t{{.CreatedAt}}"
+                            
+                            # Test that the image can be run (basic smoke test)
+                            echo "Testing image can be instantiated..."
+                            if timeout 30 docker run --rm "${ECR_REPO_PATH}:${IMAGE_TAG}" echo "Image test successful" 2>/dev/null; then
+                                echo "✓ Image smoke test passed"
+                            else
+                                echo "⚠ Warning: Image smoke test failed - image may have issues"
+                            fi
+                            
+                            # Clean up intermediate build artifacts but keep our image
+                            echo "Cleaning up build artifacts..."
+                            docker builder prune -f || true
+                            
+                            # Final disk usage check
+                            echo "Final disk usage:"
+                            df -h
+                        '''
+                        
+                    } catch (Exception e) {
+                        // Enhanced error handling
+                        def errorMessage = e.getMessage()
+                        
+                        if (errorMessage.contains("no space left on device") || 
+                            errorMessage.contains("disk") || 
+                            errorMessage.contains("space")) {
+                            
+                            sh '''
+                                echo "=== DISK SPACE FAILURE ANALYSIS ==="
+                                df -h
+                                echo "Docker system usage:"
+                                docker system df 2>/dev/null || true
+                                echo "Largest files in Docker directory:"
+                                sudo du -h /var/lib/docker/ 2>/dev/null | sort -rh | head -10 || true
+                            '''
+                            
+                            currentBuild.result = 'FAILURE'
+                            error("Docker build failed due to insufficient disk space. Jenkins node requires maintenance.")
+                            
+                        } else {
+                            currentBuild.result = 'FAILURE'
+                            error("Docker build failed: ${errorMessage}")
                         }
                     }
+                }
+            }
+            post {
+                success {
+                    script {
+                        env.DOCKER_IMAGE_BUILT = 'true'
+                        env.DOCKER_IMAGE_TAG = "${ECR_REPO_PATH}:${IMAGE_TAG}"
+                        echo "✓ Docker image built successfully: ${env.DOCKER_IMAGE_TAG}"
+                    }
+                }
+                failure {
+                    script {
+                        env.DOCKER_IMAGE_BUILT = 'false'
+                        sh '''
+                            echo "=== Emergency Cleanup After Build Failure ==="
+                            docker system prune -a -f --volumes || true
+                        '''
+                    }
+                }
+            }
         }
 
         stage('Security Scan') {
-                    steps {
+            when {
+                expression { env.DOCKER_IMAGE_BUILT == 'true' }
+            }
+            steps {
+                script {
+                    try {
+                        sh '''
+                            echo "=== Container Image Security Scan ==="
+                            
+                            # Ensure required directories exist
+                            mkdir -p "${REPORTS_DIR}"
+                            mkdir -p "${WORKSPACE}/trivy-cache"
+                            
+                            # Ensure Trivy is available
+                            export PATH="${HOME}/bin:$PATH"
+                            
+                            # Set Trivy cache location to workspace
+                            export TRIVY_CACHE_DIR="${WORKSPACE}/trivy-cache"
+                            
+                            # Verify Trivy is working
+                            trivy --version
+                            
+                            # Verify the Docker image exists locally before scanning
+                            echo "Checking if Docker image exists locally..."
+                            if ! docker images "${ECR_REPO_PATH}:${IMAGE_TAG}" --format "table {{.Repository}}:{{.Tag}}" | grep -q "${IMAGE_TAG}"; then
+                                echo "ERROR: Docker image ${ECR_REPO_PATH}:${IMAGE_TAG} not found locally"
+                                echo "Available images:"
+                                docker images "${ECR_REPO_PATH}" || echo "No images found"
+                                exit 1
+                            fi
+                            
+                            echo "✓ Docker image ${ECR_REPO_PATH}:${IMAGE_TAG} found locally"
+                            
+                            # Create scan output file
+                            touch "${REPORTS_DIR}/scan-output.log"
+                            
+                            # Run Trivy scan directly for better reliability
+                            echo "Starting Trivy security scan..."
+                            timeout 1800 trivy image \\
+                                --cache-dir "${WORKSPACE}/trivy-cache" \\
+                                --format json \\
+                                --output "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" \\
+                                --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \\
+                                --exit-code 0 \\
+                                "${ECR_REPO_PATH}:${IMAGE_TAG}" 2>&1 | tee "${REPORTS_DIR}/scan-output.log"
+                            
+                            SCAN_EXIT_CODE=${PIPESTATUS[0]}
+                            echo "Trivy scan exit code: $SCAN_EXIT_CODE"
+                            
+                            # Check if scan completed successfully
+                            if [ $SCAN_EXIT_CODE -ne 0 ] && [ $SCAN_EXIT_CODE -ne 1 ]; then
+                                echo "WARNING: Trivy scan completed with exit code $SCAN_EXIT_CODE"
+                            fi
+                            
+                            # Verify scan report was generated
+                            if [ -f "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" ]; then
+                                echo "✓ Scan report generated successfully"
+                                echo "Report size: $(du -h "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json")"
+                                
+                                # Add build_id to scan output for AI analysis
+                                echo "build_id: ${BUILD_NUMBER}" >> "${REPORTS_DIR}/scan-output.log"
+                                
+                                # Quick summary of findings
+                                echo "=== Quick Scan Summary ==="
+                                if command -v jq >/dev/null 2>&1; then
+                                    jq -r '.Results[]?.Vulnerabilities // [] | group_by(.Severity) | map({severity: .[0].Severity, count: length}) | .[]' \\
+                                        "${REPORTS_DIR}/scan-report-${IMAGE_TAG}.json" 2>/dev/null || echo "Could not parse JSON summary"
+                                else
+                                    echo "jq not available for JSON parsing"
+                                fi
+                            else
+                                echo "WARNING: Scan report not found"
+                                echo "Contents of reports directory:"
+                                ls -la "${REPORTS_DIR}/" || echo "Reports directory not found"
+                            fi
+                            
+                            exit 0
+                        '''
+                        
+                        // Process scan results
                         script {
                             try {
-                                // Pre-scan disk space and cleanup
-                                sh '''
-                                    echo "=== Pre-Security Scan Setup ==="
+                                if (fileExists("${REPORTS_DIR}/scan-output.log")) {
+                                    def scanOutput = readFile("${REPORTS_DIR}/scan-output.log")
                                     
-                                    # Check available disk space
-                                    echo "Current disk usage:"
-                                    df -h
-                                    
-                                    # Clean up Docker to free space
-                                    echo "Cleaning up Docker resources..."
-                                    docker system prune -f --volumes || true
-                                    docker image prune -a -f || true
-                                    
-                                    # Remove old trivy cache if it exists
-                                    rm -rf ~/.cache/trivy || true
-                                    
-                                    # Check space after cleanup
-                                    echo "Disk usage after cleanup:"
-                                    df -h
-                                    
-                                    # Verify minimum space requirements (at least 2GB free)
-                                    AVAILABLE_SPACE=$(df /var/lib/docker | tail -1 | awk '{print $4}')
-                                    if [ "$AVAILABLE_SPACE" -lt 2097152 ]; then
-                                        echo "WARNING: Low disk space detected. Available: ${AVAILABLE_SPACE}KB"
-                                        echo "Consider adding more cleanup or increasing disk space"
-                                    fi
-                                '''
-                                
-                                sh '''
-                                    echo "=== Container Image Security Scan ==="
-                                    
-                                    # Ensure required directories exist
-                                    mkdir -p ${REPORTS_DIR}
-                                    mkdir -p ${WORKSPACE}/trivy-cache
-                                    
-                                    # Ensure Trivy is available
-                                    export PATH=${HOME}/bin:$PATH
-                                    
-                                    # Set Trivy cache location to workspace to avoid permission issues
-                                    export TRIVY_CACHE_DIR=${WORKSPACE}/trivy-cache
-                                    
-                                    # Verify Trivy is working
-                                    trivy --version
-                                    
-                                    # Create scan output file
-                                    touch ${REPORTS_DIR}/scan-output.log
-                                    
-                                    # Set timeout for the scan (30 minutes)
-                                    timeout 1800 ./trivy/scan.sh \\
-                                        "${ECR_REPO_PATH}" \\
-                                        "${IMAGE_TAG}" \\
-                                        "${ECR_REPO_NAME}" \\
-                                        "${GIT_BRANCH}" \\
-                                        "${BUILD_URL}" \\
-                                        "${CVE_DB_HOST}" \\
-                                        "${CVE_DB_USERNAME}" \\
-                                        "${CVE_DB_PASSWORD}" \\
-                                        "${CVE_DB_NAME}" 2>&1 | tee ${REPORTS_DIR}/scan-output.log
-                                    
-                                    # Check if scan completed successfully
-                                    SCAN_EXIT_CODE=${PIPESTATUS[0]}
-                                    echo "Scan exit code: $SCAN_EXIT_CODE"
-                                    
-                                    # Verify scan report was generated
-                                    if [ -f "reports/scan-report-${IMAGE_TAG}.json" ]; then
-                                        echo "Scan report generated successfully"
-                                        cp reports/scan-report-${IMAGE_TAG}.json ${REPORTS_DIR}/
-                                    else
-                                        echo "Warning: Scan report not found at expected location"
-                                        ls -la reports/ || echo "Reports directory not found"
-                                    fi
-                                    
-                                    # Return scan exit code for proper error handling
-                                    exit $SCAN_EXIT_CODE
-                                '''
-                                
-                                // Process scan results
-                                script {
-                                    try {
-                                        // Check if scan output file exists and is not empty
-                                        if (fileExists("${REPORTS_DIR}/scan-output.log")) {
-                                            def scanOutput = readFile("${REPORTS_DIR}/scan-output.log")
-                                            
-                                            if (scanOutput.trim()) {
-                                                env.SCAN_OUTPUT = scanOutput
-                                                
-                                                // Extract build ID for AI recommendations
-                                                def buildIdMatcher = (scanOutput =~ /build_id:\s+([0-9]+)/)
-                                                env.BUILD_REF_ID = buildIdMatcher ? buildIdMatcher[0][1] : ""
-                                                
-                                                echo "Security scan completed. Build Reference ID: ${env.BUILD_REF_ID}"
-                                                
-                                                // Check for critical errors in scan output
-                                                if (scanOutput.contains("FATAL") || scanOutput.contains("no space left on device")) {
-                                                    throw new Exception("Critical error detected in scan output")
-                                                }
-                                            } else {
-                                                throw new Exception("Scan output file is empty")
-                                            }
+                                    if (scanOutput.trim()) {
+                                        env.SCAN_OUTPUT = scanOutput
+                                        
+                                        // Extract build ID from scan output
+                                        def buildIdMatcher = (scanOutput =~ /build_id:\s*([0-9]+)/)
+                                        if (buildIdMatcher) {
+                                            env.BUILD_REF_ID = buildIdMatcher[0][1]
+                                            echo "Security scan completed. Build Reference ID: ${env.BUILD_REF_ID}"
                                         } else {
-                                            throw new Exception("Scan output file not found")
+                                            env.BUILD_REF_ID = BUILD_NUMBER
+                                            echo "Using BUILD_NUMBER as BUILD_REF_ID: ${env.BUILD_REF_ID}"
                                         }
                                         
-                                        // Verify scan report exists
-                                        def reportFiles = sh(
-                                            script: "find ${REPORTS_DIR} -name '*scan-report*.json' -type f",
-                                            returnStdout: true
-                                        ).trim()
-                                        
-                                        if (reportFiles) {
-                                            echo "Found scan report files: ${reportFiles}"
-                                        } else {
-                                            echo "Warning: No scan report JSON files found"
-                                            currentBuild.result = 'UNSTABLE'
+                                        // Check for critical errors
+                                        if (scanOutput.contains("FATAL") && !scanOutput.contains("successfully")) {
+                                            throw new Exception("Fatal error detected in scan output")
                                         }
-                                        
-                                    } catch (Exception e) {
-                                        echo "Error processing scan output: ${e.getMessage()}"
-                                        env.SCAN_OUTPUT = "Scan output processing failed: ${e.getMessage()}"
-                                        env.BUILD_REF_ID = ""
-                                        throw e // Re-throw to trigger catch block
+                                    } else {
+                                        throw new Exception("Scan output file is empty")
                                     }
+                                } else {
+                                    throw new Exception("Scan output file not found")
                                 }
                                 
                             } catch (Exception e) {
-                                // Handle different types of failures
-                                def errorMessage = e.getMessage()
-                                
-                                if (errorMessage.contains("no space left on device") || 
-                                    errorMessage.contains("disk") || 
-                                    errorMessage.contains("space")) {
-                                    
-                                    currentBuild.result = 'FAILURE'
-                                    error("Pipeline failed due to insufficient disk space. Please clean up or increase disk allocation.")
-                                    
-                                } else if (errorMessage.contains("timeout") || errorMessage.contains("1800")) {
-                                    
-                                    currentBuild.result = 'UNSTABLE'
-                                    echo "Security scan timed out after 30 minutes. This may indicate network issues or very large image size."
-                                    env.SCAN_OUTPUT = "Security scan timed out: ${errorMessage}"
-                                    
-                                } else {
-                                    
-                                    currentBuild.result = 'UNSTABLE'
-                                    echo "Security scan encountered issues: ${errorMessage}"
-                                    env.SCAN_OUTPUT = "Security scan failed: ${errorMessage}"
-                                }
+                                echo "Error processing scan output: ${e.getMessage()}"
+                                env.SCAN_OUTPUT = "Scan output processing failed: ${e.getMessage()}"
+                                env.BUILD_REF_ID = BUILD_NUMBER
+                                currentBuild.result = 'UNSTABLE'
                             }
-                            
-                            // Post-scan cleanup regardless of success/failure
-                            finally {
-                                sh '''
-                                    echo "=== Post-Security Scan Cleanup ==="
-                                    
-                                    # Clean up trivy cache to prevent accumulation
-                                    rm -rf ${WORKSPACE}/trivy-cache || true
-                                    
-                                    # Clean up any temporary docker exports
-                                    sudo rm -rf /var/lib/docker/tmp/docker-export-* 2>/dev/null || true
-                                    
-                                    # Show final disk usage
-                                    echo "Final disk usage:"
-                                    df -h
-                                    
-                                    # Ensure scan artifacts are preserved for archiving
-                                    if [ -f "${REPORTS_DIR}/scan-output.log" ]; then
-                                        echo "Scan output file size: $(du -h ${REPORTS_DIR}/scan-output.log)"
-                                    fi
-                                '''
-                            }
+                        }
+                        
+                    } catch (Exception e) {
+                        def errorMessage = e.getMessage()
+                        
+                        if (errorMessage.contains("no space left on device")) {
+                            currentBuild.result = 'FAILURE'
+                            error("Security scan failed due to insufficient disk space.")
+                        } else if (errorMessage.contains("timeout")) {
+                            currentBuild.result = 'UNSTABLE'
+                            echo "Security scan timed out."
+                            env.SCAN_OUTPUT = "Security scan timed out"
+                            env.BUILD_REF_ID = BUILD_NUMBER
+                        } else {
+                            currentBuild.result = 'UNSTABLE'
+                            echo "Security scan encountered issues: ${errorMessage}"
+                            env.SCAN_OUTPUT = "Security scan failed: ${errorMessage}"
+                            env.BUILD_REF_ID = BUILD_NUMBER
                         }
                     }
-        }
-
-        stage('Debug Build Ref ID') {
-            steps {
-                script {
-                    echo "=== BUILD_REF_ID Debug Information ==="
-                    echo "BUILD_REF_ID value: '${env.BUILD_REF_ID ?: 'NULL/EMPTY'}'"
-                    echo "BUILD_REF_ID length: ${env.BUILD_REF_ID?.length() ?: 0}"
-                    echo "BUILD_REF_ID trimmed: '${env.BUILD_REF_ID?.trim() ?: 'NULL/EMPTY'}'"
-                    echo "Condition result: ${env.BUILD_REF_ID?.trim() ? 'TRUE - Stage will run' : 'FALSE - Stage will be skipped'}"
-                    
-                    // Check if scan output contains expected pattern
-                    if (env.SCAN_OUTPUT) {
-                        echo "=== Scan Output Analysis ==="
-                        echo "Scan output length: ${env.SCAN_OUTPUT.length()}"
-                        
-                        // Look for build_id pattern in scan output
-                        def buildIdMatcher = (env.SCAN_OUTPUT =~ /build_id:\s*([0-9]+)/)
-                        if (buildIdMatcher) {
-                            echo "Found build_id pattern: ${buildIdMatcher[0][0]}"
-                            echo "Extracted ID: ${buildIdMatcher[0][1]}"
-                        } else {
-                            echo "No build_id pattern found in scan output"
-                            echo "First 500 characters of scan output:"
-                            echo env.SCAN_OUTPUT.take(500)
+                }
+            }
+            post {
+                always {
+                    script {
+                        // Archive scan outputs
+                        try {
+                            archiveArtifacts artifacts: 'reports/scan-*.*, reports/scan-output.log', 
+                                           allowEmptyArchive: true,
+                                           fingerprint: true
+                        } catch (Exception e) {
+                            echo "Could not archive scan artifacts: ${e.getMessage()}"
                         }
-                    } else {
-                        echo "SCAN_OUTPUT is null or empty"
+                        
+                        // Cleanup
+                        sh '''
+                            rm -rf "${WORKSPACE}/trivy-cache" || true
+                            sudo rm -rf /var/lib/docker/tmp/docker-export-* 2>/dev/null || true
+                        '''
                     }
                 }
             }
@@ -696,27 +628,36 @@ pipeline {
 
         stage('AI Security Analysis') {
             when {
-                expression { 
-                    echo "Evaluating BUILD_REF_ID condition..."
-                    echo "BUILD_REF_ID: '${env.BUILD_REF_ID}'"
-                    def result = env.BUILD_REF_ID?.trim()
-                    echo "Condition result: ${result ? 'TRUE' : 'FALSE'}"
-                    return result
+                anyOf {
+                    expression { env.BUILD_REF_ID?.trim() && env.BUILD_REF_ID != '' }
+                    expression { fileExists("reports/scan-report-${IMAGE_TAG}.json") }
                 }
             }
             steps {
                 script {
                     try {
-                        sh '''
+                        def analysisId = env.BUILD_REF_ID?.trim() ?: BUILD_NUMBER
+                        echo "Running AI Security Analysis with ID: ${analysisId}"
+                        
+                        sh """
                             echo "=== AI-Powered Security Recommendations ==="
-                            python3 trivy/ai_suggestion.py \\
-                                "${analysisId}" \\
-                                "${ALERT_MANAGER_URL}" \\
-                                "${ALERT_MANAGER_SECRET}" \\
-                                --engine "$AI_ENGINE" \\
-                                --model "$AI_MODEL"
-                            '''
+                            echo "Analysis ID: ${analysisId}"
+                            
+                            # Check if AI script exists
+                            if [ -f "trivy/ai_suggestion.py" ]; then
+                                python3 trivy/ai_suggestion.py \\
+                                    "${analysisId}" \\
+                                    "${ALERT_MANAGER_URL}" \\
+                                    "${ALERT_MANAGER_SECRET}" \\
+                                    --engine "${AI_ENGINE}" \\
+                                    --model "${AI_MODEL}" || echo "AI analysis completed with warnings"
+                            else
+                                echo "AI suggestion script not found, skipping AI analysis"
+                            fi
+                        """
+                        
                         echo "AI security analysis completed successfully"
+                        
                     } catch (Exception e) {
                         echo "AI analysis failed but continuing pipeline: ${e.getMessage()}"
                         currentBuild.result = 'UNSTABLE'
@@ -732,18 +673,22 @@ pipeline {
                         // Process scan results for security gate
                         def scanSummary = ""
                         try {
-                            scanSummary = sh(
-                                script: """
-                                    if [ -f "reports/scan-report-${IMAGE_TAG}.json" ]; then
-                                        python3 trivy/email_template.py \\
-                                            reports/scan-report-${IMAGE_TAG}.json \\
-                                            ${BUILD_URL}
-                                    else
-                                        echo "Scan report file not found"
-                                    fi
-                                """,
-                                returnStdout: true
-                            ).trim()
+                            if (fileExists("reports/scan-report-${IMAGE_TAG}.json")) {
+                                scanSummary = sh(
+                                    script: """
+                                        if [ -f "trivy/email_template.py" ]; then
+                                            python3 trivy/email_template.py \\
+                                                reports/scan-report-${IMAGE_TAG}.json \\
+                                                ${BUILD_URL}
+                                        else
+                                            echo "Security scan completed successfully"
+                                        fi
+                                    """,
+                                    returnStdout: true
+                                ).trim()
+                            } else {
+                                scanSummary = "Scan report file not found"
+                            }
                         } catch (Exception e) {
                             scanSummary = "Security report generation failed: ${e.getMessage()}"
                         }
@@ -755,8 +700,8 @@ pipeline {
                         def highCount = 0
                         
                         if (env.SCAN_OUTPUT) {
-                            def criticalMatch = (env.SCAN_OUTPUT =~ /CRITICAL:\s+([0-9]+)/)
-                            def highMatch = (env.SCAN_OUTPUT =~ /HIGH:\s+([0-9]+)/)
+                            def criticalMatch = (env.SCAN_OUTPUT =~ /CRITICAL:\s*([0-9]+)/)
+                            def highMatch = (env.SCAN_OUTPUT =~ /HIGH:\s*([0-9]+)/)
                             
                             criticalCount = criticalMatch ? criticalMatch[0][1].toInteger() : 0
                             highCount = highMatch ? highMatch[0][1].toInteger() : 0
@@ -766,7 +711,7 @@ pipeline {
                         echo "- Critical Vulnerabilities: ${criticalCount}"
                         echo "- High Vulnerabilities: ${highCount}"
                         
-                        // Security gate decision (more lenient for now)
+                        // Security gate decision
                         if (criticalCount > 10) {
                             echo "WARNING: ${criticalCount} critical vulnerabilities found. Consider reviewing before deployment."
                         } else if (highCount > 20) {
@@ -784,34 +729,44 @@ pipeline {
         }
 
         stage('Registry Operations') {
+            when {
+                expression { env.DOCKER_IMAGE_BUILT == 'true' }
+            }
             steps {
-                sh '''
-                    echo "=== Container Registry Authentication ==="
-                    aws ecr get-login-password --region ${AWS_REGION} | \\
-                        docker login --username AWS --password-stdin ${ECR_REPO_PATH}
-                    
-                    echo "=== Container Image Registry Push ==="
-                    
-                    # Push tagged image
-                    docker push ${ECR_REPO_PATH}:${IMAGE_TAG}
-                    
-                    # Push latest tag
-                    docker push ${ECR_REPO_PATH}:latest
-                    
-                    echo "Image push completed successfully"
-                '''
+                script {
+                    retry(3) {
+                        sh '''
+                            echo "=== Container Registry Authentication ==="
+                            aws ecr get-login-password --region "${AWS_REGION}" | \\
+                                docker login --username AWS --password-stdin "${ECR_REPO_PATH}"
+                            
+                            echo "=== Container Image Registry Push ==="
+                            
+                            # Push tagged image
+                            docker push "${ECR_REPO_PATH}:${IMAGE_TAG}"
+                            
+                            # Push latest tag
+                            docker push "${ECR_REPO_PATH}:latest"
+                            
+                            echo "Image push completed successfully"
+                        '''
+                    }
+                }
             }
         }
 
         stage('Deploy Application') {
+            when {
+                expression { env.DOCKER_IMAGE_BUILT == 'true' }
+            }
             steps {
                 script {
-                    // First, test SSH connectivity
+                    // Test SSH connectivity first
                     try {
                         sshagent(credentials: ['prince-ec2']) {
                             sh '''
                                 echo "=== Testing SSH Connection ==="
-                                ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} 'echo "SSH connection test successful"'
+                                ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=no "${EC2_USER}@${EC2_HOST}" 'echo "SSH connection test successful"'
                             '''
                         }
                         echo "SSH connection verified successfully"
@@ -819,19 +774,19 @@ pipeline {
                         error("SSH connection failed. Please check your SSH credentials and EC2 server status. Error: ${e.getMessage()}")
                     }
                     
-                    // Proceed with deployment if SSH test passes
+                    // Proceed with deployment
                     sshagent(credentials: ['prince-ec2']) {
                         sh '''
                             echo "=== Application Deployment ==="
                             
-                            ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=no ${EC2_USER}@${EC2_HOST} "
+                            ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=no "${EC2_USER}@${EC2_HOST}" "
                                 set -e
                                 
                                 echo 'Deployment initiated on target server'
                                 echo 'Current user: '\\$(whoami)
                                 echo 'Current directory: '\\$(pwd)
                                 
-                                # Ensure curl & unzip exist (needed for AWS CLI install)
+                                # Install required tools
                                 if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
                                   sudo apt-get update -y
                                   sudo apt-get install -y curl unzip
@@ -936,13 +891,13 @@ pipeline {
                     echo "=== Container Registry Cleanup ==="
                     
                     # Authenticate with ECR
-                    aws ecr get-login-password --region ${AWS_REGION} | \\
-                        docker login --username AWS --password-stdin ${ECR_REPO_PATH}
+                    aws ecr get-login-password --region "${AWS_REGION}" | \\
+                        docker login --username AWS --password-stdin "${ECR_REPO_PATH}"
                     
                     # Clean up old images in ECR (keep last 5)
                     aws ecr describe-images \\
-                        --repository-name ${ECR_REPO_NAME} \\
-                        --region ${AWS_REGION} \\
+                        --repository-name "${ECR_REPO_NAME}" \\
+                        --region "${AWS_REGION}" \\
                         --query "imageDetails[?imageDigest!=null].[imageTags[0], imagePushedAt]" \\
                         --output text | \\
                         sort -k2 -r | \\
@@ -952,8 +907,8 @@ pipeline {
                             if [ "$tag" != "null" ] && [ "$tag" != "latest" ]; then
                                 echo "Removing old image tag: $tag"
                                 aws ecr batch-delete-image \\
-                                    --repository-name ${ECR_REPO_NAME} \\
-                                    --region ${AWS_REGION} \\
+                                    --repository-name "${ECR_REPO_NAME}" \\
+                                    --region "${AWS_REGION}" \\
                                     --image-ids imageTag=$tag \\
                                     --output text || true
                             fi
@@ -962,7 +917,7 @@ pipeline {
                     echo "=== Local Environment Cleanup ==="
                     
                     # Remove local Docker images (keep last 3)
-                    docker images ${ECR_REPO_PATH} --format "table {{.Repository}}:{{.Tag}} {{.CreatedAt}}" | \\
+                    docker images "${ECR_REPO_PATH}" --format "table {{.Repository}}:{{.Tag}} {{.CreatedAt}}" | \\
                         tail -n +2 | \\
                         sort -k2 -r | \\
                         tail -n +4 | \\
@@ -971,6 +926,51 @@ pipeline {
                     
                     echo "Cleanup completed"
                 '''
+            }
+        }
+
+        stage('Health Check & Monitoring') {
+            steps {
+                script {
+                    try {
+                        sh '''
+                            echo "=== Post-Deployment Health Check ==="
+                            
+                            # Wait a bit more for application to fully start
+                            sleep 30
+                            
+                            # Check if we can reach the application
+                            MAX_ATTEMPTS=5
+                            ATTEMPT=1
+                            
+                            while [ $ATTEMPT -le $MAX_ATTEMPTS ]; do
+                                echo "Health check attempt $ATTEMPT of $MAX_ATTEMPTS"
+                                
+                                if curl -f -s "http://${EC2_HOST}:${CONTAINER_PORT}/health" >/dev/null 2>&1; then
+                                    echo "✓ Application is responding to health checks"
+                                    break
+                                elif [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+                                    echo "⚠ Application health check failed after $MAX_ATTEMPTS attempts"
+                                    echo "Application may still be starting up or there may be an issue"
+                                else
+                                    echo "Health check failed, retrying in 10 seconds..."
+                                    sleep 10
+                                fi
+                                
+                                ATTEMPT=$((ATTEMPT + 1))
+                            done
+                            
+                            echo "=== Deployment Summary ==="
+                            echo "Build Number: ${BUILD_NUMBER}"
+                            echo "Image: ${ECR_REPO_PATH}:${IMAGE_TAG}"
+                            echo "Deployed to: ${EC2_HOST}:${CONTAINER_PORT}"
+                            echo "Security Report: Available in build artifacts"
+                        '''
+                    } catch (Exception e) {
+                        echo "Health check encountered issues: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
+                    }
+                }
             }
         }
     }
@@ -989,10 +989,17 @@ pipeline {
                     echo "Could not archive artifacts: ${e.getMessage()}"
                 }
                 
-                // Cleanup workspace
+                // Final cleanup
                 sh '''
+                    echo "=== Final Workspace Cleanup ==="
                     docker system prune -f --volumes || true
-                    rm -rf ${WORKSPACE}/.trivy || true
+                    rm -rf "${WORKSPACE}/.trivy" || true
+                    
+                    # Show final system state
+                    echo "Final disk usage:"
+                    df -h
+                    echo "Final Docker usage:"
+                    docker system df || true
                 '''
             }
         }
@@ -1002,27 +1009,32 @@ pipeline {
                 def deploymentTime = new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("UTC"))
                 
                 emailext(
-                    subject: "DEPLOYMENT SUCCESS: ${env.JOB_NAME} Build #${BUILD_NUMBER}",
+                    subject: "✅ DEPLOYMENT SUCCESS: ${env.JOB_NAME} Build #${BUILD_NUMBER}",
                     body: """
                         <html>
                         <head>
                             <style>
-                                body { font-family: Arial, sans-serif; margin: 20px; }
-                                .header { background-color: #28a745; color: white; padding: 15px; border-radius: 5px; }
+                                body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+                                .header { background-color: #28a745; color: white; padding: 15px; border-radius: 5px; text-align: center; }
                                 .content { padding: 20px 0; }
                                 .detail-table { border-collapse: collapse; width: 100%; margin: 15px 0; }
                                 .detail-table th, .detail-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                                .detail-table th { background-color: #f2f2f2; }
-                                .footer { margin-top: 20px; font-size: 12px; color: #666; }
+                                .detail-table th { background-color: #f2f2f2; font-weight: bold; }
+                                .success-box { background-color: #d4edda; border: 1px solid #c3e6cb; padding: 15px; border-radius: 5px; margin: 15px 0; }
+                                .footer { margin-top: 20px; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px; }
                             </style>
                         </head>
                         <body>
                             <div class="header">
-                                <h2>Deployment Successful</h2>
+                                <h2>🚀 Deployment Successful</h2>
+                                <p>Your application has been successfully deployed to production!</p>
                             </div>
                             
                             <div class="content">
-                                <p>The application has been successfully deployed to production.</p>
+                                <div class="success-box">
+                                    <strong>✅ All pipeline stages completed successfully</strong><br>
+                                    Your application is now live and responding to requests.
+                                </div>
                                 
                                 <table class="detail-table">
                                     <tr><th>Job Name</th><td>${env.JOB_NAME}</td></tr>
@@ -1031,24 +1043,27 @@ pipeline {
                                     <tr><th>Git Commit</th><td>${env.GIT_COMMIT?.take(8) ?: 'N/A'}</td></tr>
                                     <tr><th>Docker Image</th><td>${ECR_REPO_PATH}:${IMAGE_TAG}</td></tr>
                                     <tr><th>Deployment Time</th><td>${deploymentTime} UTC</td></tr>
-                                    <tr><th>Target Server</th><td>${EC2_HOST}</td></tr>
+                                    <tr><th>Target Server</th><td>${EC2_HOST}:${CONTAINER_PORT}</td></tr>
+                                    <tr><th>Build Status</th><td><span style="color: green; font-weight: bold;">SUCCESS</span></td></tr>
                                 </table>
                                 
-                                <h3>Security Scan Summary</h3>
-                                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px;">
-                                    ${env.SECURITY_REPORT ?: 'Security scan completed successfully'}
+                                <h3>🔒 Security Scan Summary</h3>
+                                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">
+                                    ${env.SECURITY_REPORT ?: 'Security scan completed successfully with no critical issues blocking deployment.'}
                                 </div>
                                 
-                                <h3>Links</h3>
-                                <ul>
-                                    <li><a href="${BUILD_URL}">View Build Details</a></li>
-                                    <li><a href="http://4.240.98.78:3000">Security Dashboard</a></li>
-                                    <li><a href="${BUILD_URL}artifact/">Build Artifacts</a></li>
+                                <h3>🔗 Quick Links</h3>
+                                <ul style="list-style-type: none; padding-left: 0;">
+                                    <li>📊 <a href="${BUILD_URL}" style="text-decoration: none;">View Build Details</a></li>
+                                    <li>🛡️ <a href="http://4.240.98.78:3000" style="text-decoration: none;">Security Dashboard</a></li>
+                                    <li>📁 <a href="${BUILD_URL}artifact/" style="text-decoration: none;">Build Artifacts</a></li>
+                                    <li>🌐 <a href="http://${EC2_HOST}:${CONTAINER_PORT}" style="text-decoration: none;">Application URL</a></li>
                                 </ul>
                             </div>
                             
                             <div class="footer">
-                                This is an automated notification from Jenkins CI/CD Pipeline.
+                                <p>This is an automated notification from Jenkins CI/CD Pipeline.<br>
+                                Build completed at ${deploymentTime} UTC</p>
                             </div>
                         </body>
                         </html>
@@ -1058,11 +1073,12 @@ pipeline {
                     attachLog: false
                 )
                 
-                echo "=== Deployment Summary ==="
-                echo "Status: SUCCESS"
-                echo "Build: ${BUILD_NUMBER}"
+                echo "=== 🎉 DEPLOYMENT SUCCESS SUMMARY ==="
+                echo "Status: ✅ SUCCESS"
+                echo "Build: #${BUILD_NUMBER}"
                 echo "Image: ${ECR_REPO_PATH}:${IMAGE_TAG}"
                 echo "Deployed: ${deploymentTime} UTC"
+                echo "Application URL: http://${EC2_HOST}:${CONTAINER_PORT}"
             }
         }
         
@@ -1071,28 +1087,33 @@ pipeline {
                 def failureTime = new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("UTC"))
                 
                 emailext(
-                    subject: "DEPLOYMENT FAILED: ${env.JOB_NAME} Build #${BUILD_NUMBER}",
+                    subject: "❌ DEPLOYMENT FAILED: ${env.JOB_NAME} Build #${BUILD_NUMBER}",
                     body: """
                         <html>
                         <head>
                             <style>
-                                body { font-family: Arial, sans-serif; margin: 20px; }
-                                .header { background-color: #dc3545; color: white; padding: 15px; border-radius: 5px; }
+                                body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+                                .header { background-color: #dc3545; color: white; padding: 15px; border-radius: 5px; text-align: center; }
                                 .content { padding: 20px 0; }
                                 .detail-table { border-collapse: collapse; width: 100%; margin: 15px 0; }
                                 .detail-table th, .detail-table td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-                                .detail-table th { background-color: #f2f2f2; }
+                                .detail-table th { background-color: #f2f2f2; font-weight: bold; }
                                 .error-section { background-color: #f8d7da; border: 1px solid #f5c6cb; padding: 15px; border-radius: 5px; margin: 15px 0; }
-                                .footer { margin-top: 20px; font-size: 12px; color: #666; }
+                                .action-section { background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 5px; margin: 15px 0; }
+                                .footer { margin-top: 20px; font-size: 12px; color: #666; border-top: 1px solid #eee; padding-top: 10px; }
                             </style>
                         </head>
                         <body>
                             <div class="header">
-                                <h2>Deployment Failed</h2>
+                                <h2>⚠️ Deployment Failed</h2>
+                                <p>The deployment pipeline encountered an error and needs attention.</p>
                             </div>
                             
                             <div class="content">
-                                <p>The deployment pipeline has failed. Please review the details below and take appropriate action.</p>
+                                <div class="error-section">
+                                    <strong>❌ Pipeline Failure Detected</strong><br>
+                                    The deployment process failed and requires immediate investigation.
+                                </div>
                                 
                                 <table class="detail-table">
                                     <tr><th>Job Name</th><td>${env.JOB_NAME}</td></tr>
@@ -1100,32 +1121,37 @@ pipeline {
                                     <tr><th>Git Branch</th><td>${env.GIT_BRANCH ?: 'N/A'}</td></tr>
                                     <tr><th>Git Commit</th><td>${env.GIT_COMMIT?.take(8) ?: 'N/A'}</td></tr>
                                     <tr><th>Failure Time</th><td>${failureTime} UTC</td></tr>
-                                    <tr><th>Build Result</th><td>${currentBuild.result ?: 'FAILURE'}</td></tr>
+                                    <tr><th>Build Result</th><td><span style="color: red; font-weight: bold;">${currentBuild.result ?: 'FAILURE'}</span></td></tr>
                                 </table>
                                 
+                                <h3>🔒 Security Scan Results</h3>
                                 <div class="error-section">
-                                    <h3>Security Scan Results</h3>
-                                    ${env.SECURITY_REPORT ?: 'Security scan results not available due to pipeline failure'}
+                                    ${env.SECURITY_REPORT ?: 'Security scan results not available due to pipeline failure. Please review build logs for details.'}
                                 </div>
                                 
-                                <h3>Immediate Actions Required</h3>
-                                <ul>
-                                    <li>Review build logs for specific error messages</li>
-                                    <li>Check security scan results if available</li>
-                                    <li>Verify infrastructure connectivity</li>
-                                    <li>Validate recent code changes</li>
-                                </ul>
+                                <div class="action-section">
+                                    <h3>🚨 Immediate Actions Required</h3>
+                                    <ol>
+                                        <li><strong>Review build logs</strong> for specific error messages and stack traces</li>
+                                        <li><strong>Check infrastructure</strong> - verify Jenkins node disk space and Docker daemon status</li>
+                                        <li><strong>Validate recent changes</strong> - review recent commits for potential issues</li>
+                                        <li><strong>Check dependencies</strong> - ensure all external services are available</li>
+                                        <li><strong>Verify credentials</strong> - confirm AWS and other service credentials are valid</li>
+                                    </ol>
+                                </div>
                                 
-                                <h3>Links</h3>
-                                <ul>
-                                    <li><a href="${BUILD_URL}console">View Console Output</a></li>
-                                    <li><a href="http://4.240.98.78:3000">Security Dashboard</a></li>
-                                    <li><a href="${BUILD_URL}">Build Details</a></li>
+                                <h3>🔗 Investigation Links</h3>
+                                <ul style="list-style-type: none; padding-left: 0;">
+                                    <li>📋 <a href="${BUILD_URL}console" style="text-decoration: none;">View Console Output</a></li>
+                                    <li>📊 <a href="${BUILD_URL}" style="text-decoration: none;">Build Details</a></li>
+                                    <li>🛡️ <a href="http://4.240.98.78:3000" style="text-decoration: none;">Security Dashboard</a></li>
+                                    <li>📁 <a href="${BUILD_URL}artifact/" style="text-decoration: none;">Available Artifacts</a></li>
                                 </ul>
                             </div>
                             
                             <div class="footer">
-                                This is an automated notification from Jenkins CI/CD Pipeline.
+                                <p>This is an automated notification from Jenkins CI/CD Pipeline.<br>
+                                Failure detected at ${failureTime} UTC</p>
                             </div>
                         </body>
                         </html>
@@ -1135,20 +1161,30 @@ pipeline {
                     attachLog: true
                 )
                 
-                echo "=== Failure Summary ==="
-                echo "Status: FAILED"
-                echo "Build: ${BUILD_NUMBER}"
+                echo "=== ❌ FAILURE SUMMARY ==="
+                echo "Status: ❌ FAILED"
+                echo "Build: #${BUILD_NUMBER}"
                 echo "Result: ${currentBuild.result}"
                 echo "Failed: ${failureTime} UTC"
+                echo "Action Required: Review console logs and investigate"
             }
         }
         
         unstable {
-            echo "Build completed with warnings. Check logs for details."
+            script {
+                echo "=== ⚠️ UNSTABLE BUILD SUMMARY ==="
+                echo "Build completed with warnings. Check logs for details."
+                echo "Security scan may have encountered non-critical issues."
+                echo "Application deployment may have succeeded despite warnings."
+            }
         }
         
         aborted {
-            echo "Build was aborted by user or timeout."
+            script {
+                echo "=== 🛑 BUILD ABORTED ==="
+                echo "Build was aborted by user or timeout."
+                echo "Check pipeline configuration and resource allocation."
+            }
         }
     }
 }

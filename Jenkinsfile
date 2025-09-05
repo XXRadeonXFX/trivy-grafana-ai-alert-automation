@@ -319,29 +319,64 @@ pipeline {
                                 sh '''
                                     echo "=== Docker Image Build ==="
                                     
-                                    # Set Docker build options for better resource management
-                                    export DOCKER_BUILDKIT=1
-                                    export BUILDKIT_PROGRESS=plain
+                                    # Check Docker version and BuildKit support
+                                    echo "Docker version:"
+                                    docker --version
+                                    
+                                    # Check if BuildKit/buildx is available
+                                    echo "Checking BuildKit/buildx availability..."
+                                    if docker buildx version >/dev/null 2>&1; then
+                                        echo "✓ BuildKit/buildx is available"
+                                        export DOCKER_BUILDKIT=1
+                                        export BUILDKIT_PROGRESS=plain
+                                        BUILD_COMMAND="docker buildx build"
+                                        PROGRESS_FLAG="--progress=plain"
+                                    else
+                                        echo "⚠ BuildKit/buildx not available, using legacy builder"
+                                        export DOCKER_BUILDKIT=0
+                                        BUILD_COMMAND="docker build"
+                                        PROGRESS_FLAG=""
+                                    fi
                                     
                                     # Create build context size check
                                     echo "Checking build context size..."
                                     BUILD_CONTEXT_SIZE=$(du -sh . | cut -f1)
                                     echo "Build context size: $BUILD_CONTEXT_SIZE"
                                     
-                                    # Build Docker image with optimized settings
-                                    echo "Starting Docker build..."
-                                    docker build \\
-                                        --no-cache \\
-                                        --pull \\
-                                        --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
-                                        --tag ${ECR_REPO_PATH}:latest \\
-                                        --label "build.number=${BUILD_NUMBER}" \\
-                                        --label "build.url=${BUILD_URL}" \\
-                                        --label "git.commit=${GIT_COMMIT}" \\
-                                        --label "git.branch=${GIT_BRANCH}" \\
-                                        --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
-                                        --progress=plain \\
-                                        . 2>&1
+                                    # Build Docker image with fallback approach
+                                    echo "Starting Docker build with command: $BUILD_COMMAND"
+                                    
+                                    if [ "$DOCKER_BUILDKIT" = "1" ]; then
+                                        # BuildKit-enabled build
+                                        echo "Using BuildKit for optimized build..."
+                                        $BUILD_COMMAND \\
+                                            --no-cache \\
+                                            --pull \\
+                                            --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
+                                            --tag ${ECR_REPO_PATH}:latest \\
+                                            --label "build.number=${BUILD_NUMBER}" \\
+                                            --label "build.url=${BUILD_URL}" \\
+                                            --label "git.commit=${GIT_COMMIT}" \\
+                                            --label "git.branch=${GIT_BRANCH}" \\
+                                            --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
+                                            $PROGRESS_FLAG \\
+                                            --load \\
+                                            . 2>&1
+                                    else
+                                        # Legacy build without BuildKit
+                                        echo "Using legacy Docker build..."
+                                        $BUILD_COMMAND \\
+                                            --no-cache \\
+                                            --pull \\
+                                            --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
+                                            --tag ${ECR_REPO_PATH}:latest \\
+                                            --label "build.number=${BUILD_NUMBER}" \\
+                                            --label "build.url=${BUILD_URL}" \\
+                                            --label "git.commit=${GIT_COMMIT}" \\
+                                            --label "git.branch=${GIT_BRANCH}" \\
+                                            --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
+                                            . 2>&1
+                                    fi
                                     
                                     # Verify image was created successfully
                                     echo "Verifying built image..."

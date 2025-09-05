@@ -571,7 +571,7 @@ def update_ai_recommendation(build_id, html_content):
             ai_recommendation = %s, 
             ai_recommendation_html = %s
 
-        WHERE id = %s
+        WHERE CAST(regexp_replace(tag, '[^0-9]', '', 'g') AS INT) = %s
     """
     cur.execute(update_query, (clean_text, html_content,build_id))
     conn.commit()

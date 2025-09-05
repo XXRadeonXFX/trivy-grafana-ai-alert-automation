@@ -353,7 +353,7 @@ pipeline {
                         sh '''
                             echo "=== AI-Powered Security Recommendations ==="
                             python3 trivy/ai_suggestion.py \\
-                                "${BUILD_REF_ID}" \\
+                                "4" \\
                                 "${ALERT_MANAGER_URL}" \\
                                 "${ALERT_MANAGER_SECRET}" \\
                                 --engine "$AI_ENGINE" \\

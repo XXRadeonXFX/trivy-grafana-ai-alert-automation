@@ -357,9 +357,8 @@ pipeline {
                                 "${ALERT_MANAGER_URL}" \\
                                 "${ALERT_MANAGER_SECRET}" \\
                                 --engine "$AI_ENGINE" \\
-                                --model "$AI_MODEL" \\
-                                --timeout 60 --retries 3 --log-level INFO --json-only
-                        '''
+                                --model "$AI_MODEL"
+                            '''
                         echo "AI security analysis completed successfully"
                     } catch (Exception e) {
                         echo "AI analysis failed but continuing pipeline: ${e.getMessage()}"

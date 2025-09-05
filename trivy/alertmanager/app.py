@@ -324,9 +324,12 @@ def trigger():
 
 #--------- AI Suggestion ----------#
 class PromptRequest(BaseModel):
-    jenkins_build_number: int
-    ai_engine: str # "gemini", "openai"
-    model: str  # "gemini-2.5-flash", "gpt-4.1-nano"
+    jenkins_build_number: int = Field(..., alias="build_id")
+    ai_engine: str
+    model: str
+
+    class Config:
+        allow_population_by_field_name = True
 
 @app.post("/generate-ai-suggestion")
 async def generate_text(request: PromptRequest,api_secret: str = Header(None)):

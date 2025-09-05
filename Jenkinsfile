@@ -662,9 +662,47 @@ pipeline {
                         }
                     }
         }
+
+        stage('Debug Build Ref ID') {
+            steps {
+                script {
+                    echo "=== BUILD_REF_ID Debug Information ==="
+                    echo "BUILD_REF_ID value: '${env.BUILD_REF_ID ?: 'NULL/EMPTY'}'"
+                    echo "BUILD_REF_ID length: ${env.BUILD_REF_ID?.length() ?: 0}"
+                    echo "BUILD_REF_ID trimmed: '${env.BUILD_REF_ID?.trim() ?: 'NULL/EMPTY'}'"
+                    echo "Condition result: ${env.BUILD_REF_ID?.trim() ? 'TRUE - Stage will run' : 'FALSE - Stage will be skipped'}"
+                    
+                    // Check if scan output contains expected pattern
+                    if (env.SCAN_OUTPUT) {
+                        echo "=== Scan Output Analysis ==="
+                        echo "Scan output length: ${env.SCAN_OUTPUT.length()}"
+                        
+                        // Look for build_id pattern in scan output
+                        def buildIdMatcher = (env.SCAN_OUTPUT =~ /build_id:\s*([0-9]+)/)
+                        if (buildIdMatcher) {
+                            echo "Found build_id pattern: ${buildIdMatcher[0][0]}"
+                            echo "Extracted ID: ${buildIdMatcher[0][1]}"
+                        } else {
+                            echo "No build_id pattern found in scan output"
+                            echo "First 500 characters of scan output:"
+                            echo env.SCAN_OUTPUT.take(500)
+                        }
+                    } else {
+                        echo "SCAN_OUTPUT is null or empty"
+                    }
+                }
+            }
+        }
+
         stage('AI Security Analysis') {
             when {
-                expression { env.BUILD_REF_ID?.trim() }
+                expression { 
+                    echo "Evaluating BUILD_REF_ID condition..."
+                    echo "BUILD_REF_ID: '${env.BUILD_REF_ID}'"
+                    def result = env.BUILD_REF_ID?.trim()
+                    echo "Condition result: ${result ? 'TRUE' : 'FALSE'}"
+                    return result
+                }
             }
             steps {
                 script {

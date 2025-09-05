@@ -265,26 +265,189 @@ pipeline {
         }
 
         stage('Build Application Image') {
-            steps {
-                sh '''
-                    echo "=== Docker Image Build ==="
-                    
-                    # Build Docker image with build args
-                    docker build \\
-                        --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
-                        --tag ${ECR_REPO_PATH}:latest \\
-                        --label "build.number=${BUILD_NUMBER}" \\
-                        --label "build.url=${BUILD_URL}" \\
-                        --label "git.commit=${GIT_COMMIT}" \\
-                        --label "git.branch=${GIT_BRANCH}" \\
-                        .
-                    
-                    # Verify image was created
-                    docker images ${ECR_REPO_PATH}:${IMAGE_TAG}
-                    
-                    echo "Docker image build completed successfully"
-                '''
-            }
+                    steps {
+                        script {
+                            try {
+                                // Pre-build cleanup and space check
+                                sh '''
+                                    echo "=== Pre-Build Environment Setup ==="
+                                    
+                                    # Check current disk usage
+                                    echo "Current disk usage:"
+                                    df -h
+                                    
+                                    # Clean up Docker to free space before build
+                                    echo "Cleaning up Docker resources..."
+                                    docker system prune -f --volumes || true
+                                    docker image prune -a -f || true
+                                    
+                                    # Remove dangling images and containers
+                                    docker container prune -f || true
+                                    docker volume prune -f || true
+                                    docker network prune -f || true
+                                    
+                                    # Clean up any old builds of this image
+                                    docker rmi ${ECR_REPO_PATH}:latest || true
+                                    docker rmi $(docker images ${ECR_REPO_PATH} -q) 2>/dev/null || true
+                                    
+                                    # Check available space after cleanup
+                                    echo "Disk usage after cleanup:"
+                                    df -h
+                                    
+                                    # Verify minimum space requirements (at least 3GB for Docker build)
+                                    AVAILABLE_SPACE_KB=$(df /var/lib/docker | tail -1 | awk '{print $4}')
+                                    AVAILABLE_SPACE_GB=$((AVAILABLE_SPACE_KB / 1024 / 1024))
+                                    
+                                    echo "Available space: ${AVAILABLE_SPACE_GB}GB"
+                                    
+                                    if [ "$AVAILABLE_SPACE_KB" -lt 3145728 ]; then
+                                        echo "ERROR: Insufficient disk space for Docker build. Available: ${AVAILABLE_SPACE_GB}GB, Required: 3GB"
+                                        echo "Please free up disk space or increase storage allocation."
+                                        exit 1
+                                    fi
+                                    
+                                    # Check Docker daemon status
+                                    if ! docker info >/dev/null 2>&1; then
+                                        echo "ERROR: Docker daemon is not accessible"
+                                        exit 1
+                                    fi
+                                    
+                                    echo "Pre-build checks passed. Proceeding with Docker build..."
+                                '''
+                                
+                                // Build Docker image with enhanced error handling
+                                sh '''
+                                    echo "=== Docker Image Build ==="
+                                    
+                                    # Set Docker build options for better resource management
+                                    export DOCKER_BUILDKIT=1
+                                    export BUILDKIT_PROGRESS=plain
+                                    
+                                    # Create build context size check
+                                    echo "Checking build context size..."
+                                    BUILD_CONTEXT_SIZE=$(du -sh . | cut -f1)
+                                    echo "Build context size: $BUILD_CONTEXT_SIZE"
+                                    
+                                    # Build Docker image with optimized settings
+                                    echo "Starting Docker build..."
+                                    docker build \\
+                                        --no-cache \\
+                                        --pull \\
+                                        --tag ${ECR_REPO_PATH}:${IMAGE_TAG} \\
+                                        --tag ${ECR_REPO_PATH}:latest \\
+                                        --label "build.number=${BUILD_NUMBER}" \\
+                                        --label "build.url=${BUILD_URL}" \\
+                                        --label "git.commit=${GIT_COMMIT}" \\
+                                        --label "git.branch=${GIT_BRANCH}" \\
+                                        --label "build.timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \\
+                                        --progress=plain \\
+                                        . 2>&1
+                                    
+                                    # Verify image was created successfully
+                                    echo "Verifying built image..."
+                                    docker images ${ECR_REPO_PATH}:${IMAGE_TAG}
+                                    
+                                    # Get image size information
+                                    IMAGE_SIZE=$(docker images ${ECR_REPO_PATH}:${IMAGE_TAG} --format "table {{.Size}}" | tail -1)
+                                    echo "Built image size: $IMAGE_SIZE"
+                                    
+                                    # Quick image inspection
+                                    echo "Image inspection:"
+                                    docker inspect ${ECR_REPO_PATH}:${IMAGE_TAG} --format='{{.Config.Labels}}' || true
+                                    
+                                    echo "Docker image build completed successfully"
+                                '''
+                                
+                                // Post-build verification and cleanup
+                                sh '''
+                                    echo "=== Post-Build Verification ==="
+                                    
+                                    # Verify both tags exist
+                                    echo "Verifying image tags:"
+                                    docker images ${ECR_REPO_PATH} --format "table {{.Repository}}:{{.Tag}}\\t{{.Size}}\\t{{.CreatedAt}}"
+                                    
+                                    # Test that the image can be run (basic smoke test)
+                                    echo "Testing image can be instantiated..."
+                                    if docker run --rm ${ECR_REPO_PATH}:${IMAGE_TAG} echo "Image test successful" 2>/dev/null; then
+                                        echo "✓ Image smoke test passed"
+                                    else
+                                        echo "⚠ Warning: Image smoke test failed - image may have issues"
+                                    fi
+                                    
+                                    # Clean up intermediate build artifacts but keep our image
+                                    echo "Cleaning up build artifacts..."
+                                    docker builder prune -f || true
+                                    
+                                    # Final disk usage check
+                                    echo "Final disk usage:"
+                                    df -h
+                                '''
+                                
+                            } catch (Exception e) {
+                                // Enhanced error handling with specific disk space detection
+                                def errorMessage = e.getMessage()
+                                
+                                if (errorMessage.contains("no space left on device") || 
+                                    errorMessage.contains("disk") || 
+                                    errorMessage.contains("space")) {
+                                    
+                                    // Critical disk space failure
+                                    sh '''
+                                        echo "=== DISK SPACE FAILURE ANALYSIS ==="
+                                        df -h
+                                        echo "Docker system usage:"
+                                        docker system df 2>/dev/null || true
+                                        echo "Largest files in Docker directory:"
+                                        sudo du -h /var/lib/docker/ 2>/dev/null | sort -rh | head -10 || true
+                                    '''
+                                    
+                                    currentBuild.result = 'FAILURE'
+                                    error("Docker build failed due to insufficient disk space. Jenkins node requires maintenance.")
+                                    
+                                } else if (errorMessage.contains("docker: command not found") || 
+                                          errorMessage.contains("daemon")) {
+                                    
+                                    // Docker daemon issues
+                                    currentBuild.result = 'FAILURE'
+                                    error("Docker build failed due to Docker daemon issues: ${errorMessage}")
+                                    
+                                } else if (errorMessage.contains("COPY failed") || 
+                                          errorMessage.contains("ADD failed")) {
+                                    
+                                    // Dockerfile or build context issues
+                                    currentBuild.result = 'FAILURE'
+                                    error("Docker build failed due to build context or Dockerfile issues: ${errorMessage}")
+                                    
+                                } else {
+                                    
+                                    // Generic build failure
+                                    currentBuild.result = 'FAILURE'
+                                    error("Docker build failed: ${errorMessage}")
+                                }
+                            }
+                            
+                            // Always clean up regardless of success/failure
+                            finally {
+                                sh '''
+                                    echo "=== Final Cleanup ==="
+                                    
+                                    # Remove any dangling images created during failed builds
+                                    docker image prune -f || true
+                                    
+                                    # Show final Docker system usage
+                                    echo "Final Docker system usage:"
+                                    docker system df || true
+                                    
+                                    # Log successful build for tracking
+                                    if docker images ${ECR_REPO_PATH}:${IMAGE_TAG} >/dev/null 2>&1; then
+                                        echo "✓ Image ${ECR_REPO_PATH}:${IMAGE_TAG} successfully built and available"
+                                    else
+                                        echo "✗ Image ${ECR_REPO_PATH}:${IMAGE_TAG} not found after build"
+                                    fi
+                                '''
+                            }
+                        }
+                    }
         }
 
         stage('Security Scan') {

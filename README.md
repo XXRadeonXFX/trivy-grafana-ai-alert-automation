@@ -322,7 +322,7 @@ curl -X POST "http://4.240.98.78:8000/generate-ai-suggestion"   -H "Content-Type
     - `/trigger-weekly-alert`
   - Example webhook URL:
     ```bash
-    http://alerts.example.com/trigger-daily-alert
+    https://alerts.example.com/trigger-daily-alert
     ```
 
 - **Environment Variables for Email Reports**  
@@ -340,8 +340,8 @@ curl -X POST "http://4.240.98.78:8000/generate-ai-suggestion"   -H "Content-Type
 Add the FastAPI alert endpoints to a cron job to run daily and weekly at 10:00 AM:
 
 ```
-0 10 * * * curl -X POST http://alerts.thakurprince.com/trigger-daily-alert
-0 10 * * 1 curl -X POST http://alerts.thakurprince.com/trigger-weekly-alert
+0 10 * * * curl -X POST https://alerts.thakurprince.com/trigger-daily-alert
+0 10 * * 1 curl -X POST https://alerts.thakurprince.com/trigger-weekly-alert
 ```
 
 - This is configured on the server where the Alert Manager is running.

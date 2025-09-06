@@ -322,7 +322,7 @@ curl -X POST "http://4.240.98.78:8000/generate-ai-suggestion"   -H "Content-Type
     - `/trigger-weekly-alert`
   - Example webhook URL:
     ```bash
-    https://alerts.example.com/trigger-daily-alert
+    https://alerts.thakurprince.com/trigger-daily-alert
     ```
 
 - **Environment Variables for Email Reports**  

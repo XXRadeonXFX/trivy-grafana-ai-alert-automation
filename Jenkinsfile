@@ -43,7 +43,7 @@ pipeline {
         CVE_DB_NAME = credentials('CVE_DB_NAME')
         
         // Alert Manager Configuration
-        ALERT_MANAGER_URL = "http://4.240.98.78:8000"
+        ALERT_MANAGER_URL = "https://alerts.thakurprince.com:8000"
         ALERT_MANAGER_SECRET = "yourapisecret"
         AI_ENGINE = "gemini"
         AI_MODEL = "gemini-2.0-flash"
